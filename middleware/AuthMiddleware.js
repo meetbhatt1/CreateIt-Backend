@@ -135,6 +135,6 @@ export const auth = async (req, res, next) => {
         console.log("User:", await User.findOne({ _id: decoded._id }));
         next();
     } catch (error) {
-        res.status(404).json({ message: 'Error auth:', error });
+        res.status(401).json({ message: 'Error auth:', error });
     }
 };

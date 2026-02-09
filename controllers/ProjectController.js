@@ -1,4 +1,5 @@
 import Project from '../models/projectModel.js';
+import { addXP } from '../services/GamificationService.js';
 
 // Create Project
 export const createProject = async (req, res) => {
@@ -21,6 +22,9 @@ export const createProject = async (req, res) => {
                 dbFile: files && files.dbFile ? files.dbFile[0].path : null
             }
         });
+
+        // Award XP
+        await addXP(ownerId, 'CREATE_PROJECT');
 
         res.status(201).json({ success: true, message: 'Project created', project: newProject });
     } catch (err) {

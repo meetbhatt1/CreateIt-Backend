@@ -1,4 +1,5 @@
 import Task from "../models/TaskModel.js";
+import { addXP } from "../services/GamificationService.js";
 
 export const getTasksByProject = async (req, res) => {
     try {
@@ -34,10 +35,21 @@ export const createTask = async (req, res) => {
 
 export const updateTask = async (req, res) => {
     try {
+        const { status } = req.body;
+        const task = await Task.findById(req.params.taskId);
+
+        if (!task) return res.status(404).json({ message: "Task not found" });
+
+        const oldStatus = task.status;
         const updated = await Task.findByIdAndUpdate(req.params.taskId, req.body, {
             new: true,
         });
-        if (!updated) return res.status(404).json({ message: "Task not found" });
+
+        // Award XP if task is moved to Done/Completed and wasn't there before
+        if (['Done', 'Completed'].includes(status) && !['Done', 'Completed'].includes(oldStatus)) {
+            await addXP(req.user._id, 'COMPLETE_TASK');
+        }
+
         res.json(updated);
     } catch (err) {
         res.status(500).json({ message: "Failed to update task" });
