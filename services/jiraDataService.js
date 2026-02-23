@@ -144,29 +144,24 @@ export const getJiraProjects = async (userId) => {
     }
 };
 
+const SEARCH_ENDPOINT = '/search/jql'; // current API; legacy /search is deprecated/removed
+
 /**
  * Get JIRA issues for a project
  */
 export const getJiraIssuesForProject = async (userId, projectKey) => {
     let jira = await createJiraClient(userId);
-    const jql = `project = ${projectKey} ORDER BY updated DESC`;
+    const payload = { jql: `project = ${projectKey} ORDER BY updated DESC`, maxResults: 100 };
 
     try {
-        const response = await jira.post('/search', {
-            jql,
-            maxResults: 100
-        });
+        const response = await jira.post(SEARCH_ENDPOINT, payload);
         return response.data.issues || [];
     } catch (error) {
         const status = error?.response?.status;
         if (status === 404 || status === 410) {
-            // Prefer project-specific recovery so we bind to the Jira site that contains this project key.
             await recoverJiraCloudIdForProject(userId, projectKey);
             jira = await createJiraClient(userId);
-            const response = await jira.post('/search', {
-                jql,
-                maxResults: 100
-            });
+            const response = await jira.post(SEARCH_ENDPOINT, payload);
             return response.data.issues || [];
         }
         throw error;

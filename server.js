@@ -11,6 +11,7 @@ import ChatRoutes from './routes/ChatRoutes.js'
 import commentRoutes from './routes/commentRoutes.js'
 import JiraRoutes from './routes/JiraRoutes.js'
 import DashboardRoutes from './routes/DashboardRoutes.js'
+import MockInterviewRoutes from './routes/MockInterviewRoutes.js'
 import ChatMessage from './models/ChatMessage.js'
 import ChatRoom from './models/ChatRoom.js'
 import { createSocketAuthMiddleware } from './middleware/SocketAuth.js'
@@ -46,6 +47,7 @@ app.use('/api/chat', ChatRoutes)
 app.use('/api/comments', commentRoutes)
 app.use('/api/jira', JiraRoutes)
 app.use('/api/dashboard', DashboardRoutes)
+app.use('/api/mock-interview', MockInterviewRoutes)
 
 // ✅ Create HTTP server
 const httpServer = createServer(app)

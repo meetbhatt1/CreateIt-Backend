@@ -1,34 +1,49 @@
 import { createJiraClient, recoverJiraCloudIdForProject } from "./jiraOAuthService.js";
 import { getJiraIssuesForProject } from "./jiraDataService.js";
 
-/**
- * Map raw Jira issues to simple task shape (from POST /search response or from getJiraIssuesForProject).
- */
-function mapIssuesToTasks(responseOrIssues) {
-    const issues = Array.isArray(responseOrIssues)
-        ? responseOrIssues
-        : (responseOrIssues?.data?.issues ?? []);
-    return issues.map(issue => ({
-        id: issue.id,
-        key: issue.key,
-        title: issue.fields?.summary ?? 'Untitled',
-        status: issue.fields?.status?.name || 'To Do',
-        assignee: issue.fields?.assignee?.displayName || 'Unassigned',
-        priority: issue.fields?.priority?.name || 'Medium',
-        created: issue.fields?.created,
-        updated: issue.fields?.updated
-    }));
+/** Normalize Jira status for Kanban (In Progress, To Do, Done, etc.). */
+function normalizeStatus(statusObj) {
+    if (!statusObj) return 'To Do';
+    const name = statusObj.name ?? statusObj.statusCategory?.name ?? statusObj.id ?? '';
+    if (typeof name === 'string' && name.length) return name;
+    const category = statusObj.statusCategory?.key;
+    if (category === 'indeterminate') return 'In Progress';
+    if (category === 'done') return 'Done';
+    return 'To Do';
 }
+
+/** Map raw Jira issues to simple task shape. Handles /search and /search/jql response shapes. */
+function mapIssuesToTasks(responseOrIssues) {
+    const data = responseOrIssues?.data ?? responseOrIssues;
+    const issues = Array.isArray(data) ? data : (data?.issues ?? data?.values ?? []);
+    return issues.map(issue => {
+        const f = issue.fields ?? issue;
+        const statusObj = f.status ?? f.statusCategory;
+        return {
+            id: issue.id,
+            key: issue.key,
+            title: f.summary ?? f.title ?? 'Untitled',
+            status: normalizeStatus(statusObj),
+            assignee: f.assignee?.displayName ?? f.assignee?.name ?? f.assignee?.emailAddress ?? 'Unassigned',
+            priority: f.priority?.name ?? f.priority ?? 'Medium',
+            created: f.created,
+            updated: f.updated
+        };
+    });
+}
+
+const SEARCH_ENDPOINT = '/search/jql'; // current API; legacy /search is deprecated/removed
 
 export const getSimpleJiraTasks = async (userId, projectKey) => {
     const payload = {
         jql: `project = ${projectKey} ORDER BY updated DESC`,
-        maxResults: 100
+        maxResults: 100,
+        fields: ['summary', 'status', 'assignee', 'priority', 'created', 'updated']
     };
 
     try {
         let jira = await createJiraClient(userId);
-        const response = await jira.post('/search', payload);
+        const response = await jira.post(SEARCH_ENDPOINT, payload);
         return mapIssuesToTasks(response);
     } catch (error) {
         const status = error?.response?.status;
@@ -36,7 +51,7 @@ export const getSimpleJiraTasks = async (userId, projectKey) => {
             try {
                 await recoverJiraCloudIdForProject(userId, projectKey);
                 const jira = await createJiraClient(userId);
-                const response = await jira.post('/search', payload);
+                const response = await jira.post(SEARCH_ENDPOINT, payload);
                 return mapIssuesToTasks(response);
             } catch (recoveryErr) {
                 try {
