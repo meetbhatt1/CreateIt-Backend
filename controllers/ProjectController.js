@@ -4,8 +4,12 @@ import { addXP } from '../services/GamificationService.js';
 // Create Project
 export const createProject = async (req, res) => {
     try {
-        const { title, description, domain, techStack, collaborationType, ownerId } = req.body;
+        const { title, description, domain, techStack, collaborationType } = req.body;
         const files = req.files;
+        const ownerId = req.user?._id;
+        if (!ownerId) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
 
         const newProject = await Project.create({
             title,
@@ -62,7 +66,7 @@ export const getAllProjects = async (req, res) => {
 // Get My Projects (Owned or Member)
 export const getMyProjects = async (req, res) => {
     try {
-        const userId = req.params.id;
+        const userId = req.user?._id ?? req.params.id;
 
         const myProjects = await Project.find({
             $or: [
@@ -151,6 +155,6 @@ export const deleteProject = async (req, res) => {
         });
 
     } catch (err) {
-        res.status(400).json({ success: false, error: err.message });
+        res.status(500).json({ success: false, error: err.message });
     }
 };

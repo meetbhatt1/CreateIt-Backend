@@ -6,7 +6,7 @@ import {
     getProjectById,
     deleteProject
 } from '../controllers/ProjectController.js';
-
+import { auth } from '../middleware/AuthMiddleware.js';
 import multer from 'multer';
 import path from 'path';
 
@@ -39,7 +39,7 @@ const upload = multer({
 
 const router = express.Router();
 
-router.post('/create', upload.fields([
+router.post('/create', auth, upload.fields([
     { name: 'frontend', maxCount: 1 },
     { name: 'backend', maxCount: 1 },
     { name: 'envFile', maxCount: 1 },
@@ -47,8 +47,8 @@ router.post('/create', upload.fields([
     { name: 'screenshots', maxCount: 10 }
 ]), createProject);
 router.get('/all', getAllProjects);
-router.get('/my-projects/:id', getMyProjects);
+router.get('/my-projects/:id', auth, getMyProjects);
 router.get('/:id', getProjectById);
-router.delete('/:userId/:projectId', deleteProject);
+router.delete('/:userId/:projectId', auth, deleteProject);
 
 export default router;

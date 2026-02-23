@@ -1,9 +1,20 @@
 import express from 'express'
 import ChatRoom from '../models/ChatRoom.js'
 import ChatMessage from '../models/ChatMessage.js'
+import Team from '../models/Team.js'
 import { auth } from '../middleware/AuthMiddleware.js'
 
 const router = express.Router()
+
+/** For slug team-{teamId}, return true if user is team owner or accepted member. */
+async function isTeamRoomMember(slug, userId) {
+    if (!slug?.startsWith('team-') || !userId) return false
+    const teamId = slug.replace('team-', '')
+    const team = await Team.findById(teamId).lean()
+    if (!team) return false
+    const uid = userId?.toString?.() ?? userId
+    return String(team.owner) === uid || (team.members || []).some(m => String(m?.user) === uid && m?.status === 'accepted')
+}
 
 // Create a room (with authenticated user)
 router.post('/rooms', auth, async (req, res) => {
@@ -30,7 +41,7 @@ router.post('/rooms', auth, async (req, res) => {
 router.get('/available-rooms', auth, async (req, res) => {
     try {
         const rooms = await ChatRoom.find()
-            .populate('members', 'name email avatar') // Populate member details
+            .populate('members', 'fullName email profileImage')
             .select('name description slug members createdAt')
 
         return res.json({ success: true, rooms })
@@ -47,12 +58,17 @@ router.post('/rooms/:slug/join', auth, async (req, res) => {
 
         if (!room) return res.status(404).json({ message: 'Room not found' })
 
-        // Check if user is already a member
-        if (room.members.includes(req.user._id)) {
+        const userIdStr = req.user._id?.toString?.() ?? req.user._id
+        const inRoomMembers = room.members.some(m => (m?.toString?.() ?? m) === userIdStr)
+        if (inRoomMembers) {
             return res.status(400).json({ message: 'Already a member' })
         }
 
-        // Add user to members
+        if (slug.startsWith('team-')) {
+            const allowed = await isTeamRoomMember(slug, req.user._id)
+            if (!allowed) return res.status(403).json({ message: 'Not a member of this team' })
+        }
+
         room.members.push(req.user._id)
         await room.save()
 
@@ -71,8 +87,12 @@ router.get('/rooms/:slug/history', auth, async (req, res) => {
 
         if (!room) return res.status(404).json({ message: 'Room not found' })
 
-        // Check if user is a member of the room
-        if (!room.members.includes(req.user._id)) {
+        const userIdStr = req.user._id?.toString?.() ?? req.user._id
+        let isMember = room.members.some(m => (m?.toString?.() ?? m) === userIdStr)
+        if (!isMember && slug.startsWith('team-')) {
+            isMember = await isTeamRoomMember(slug, req.user._id)
+        }
+        if (!isMember) {
             return res.status(403).json({ message: 'Not a member of this room' })
         }
 
@@ -80,7 +100,7 @@ router.get('/rooms/:slug/history', auth, async (req, res) => {
         if (before) query.createdAt = { $lt: new Date(before) }
 
         const items = await ChatMessage.find(query)
-            .populate('sender', 'name avatar') // Populate sender info
+            .populate('sender', 'fullName profileImage')
             .sort({ createdAt: -1 })
             .limit(parseInt(limit, 10))
 

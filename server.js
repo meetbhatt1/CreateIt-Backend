@@ -76,9 +76,9 @@ io.on("connection", (socket) => {
             }
             // Enforce team membership if slug implies team room: team-{teamId}
             if (slug.startsWith('team-')) {
-                const teamId = slug.replace('team-', '')
-                const userId = socket.user?.id
-                if (!userId) return socket.emit('chat:error', { message: 'Unauthorized' })
+                const teamId = slug.replace('team-', '');
+                const userId = socket.user?.id ?? socket.user?._id;
+                if (!userId) return socket.emit('chat:error', { message: 'Unauthorized' });
                 const team = await Team.findById(teamId).lean()
                 const isMember = team && (
                     String(team.owner) === String(userId) ||
@@ -86,29 +86,51 @@ io.on("connection", (socket) => {
                 )
                 if (!isMember) return socket.emit('chat:error', { message: 'Forbidden' })
             }
-            socket.join(room._id.toString())
-            socket.emit('chat:joined', { roomId: room._id, slug })
+            const roomIdStr = room._id.toString();
+            socket.join(roomIdStr);
+            socket.emit('chat:joined', { roomId: roomIdStr, slug });
+            console.log('[chat:join] slug=%s roomId=%s', slug, roomIdStr);
         } catch (e) {
-            socket.emit('chat:error', { message: 'Failed to join room' })
+            console.error('[chat:join] Error:', e.message);
+            socket.emit('chat:error', { message: 'Failed to join room' });
         }
     })
 
     // Typing indicator
     socket.on('chat:typing', ({ roomId, isTyping }) => {
-        socket.to(roomId).emit('chat:typing', { userId: socket.user?.id, isTyping })
+        if (roomId) socket.to(String(roomId)).emit('chat:typing', { userId: socket.user?.id ?? socket.user?._id, isTyping });
     })
 
     // Send message -> persist -> broadcast
     socket.on('chat:send', async ({ roomId, type = 'text', message = '', meta = {}, }) => {
         try {
-            if (!socket.user?.id) return socket.emit('chat:error', { message: 'Unauthorized' })
+            const uid = socket.user?.id ?? socket.user?._id;
+            if (!uid) {
+                console.log('[chat:send] Unauthorized: no user');
+                return socket.emit('chat:error', { message: 'Unauthorized' });
+            }
+            if (!roomId) {
+                console.log('[chat:send] Missing roomId');
+                return socket.emit('chat:error', { message: 'Missing room' });
+            }
+            // roomId may be ChatRoom._id (24-char hex) or slug (e.g. team-xxx); resolve to ObjectId for DB
+            const isObjectId = /^[a-fA-F0-9]{24}$/.test(String(roomId));
+            let roomDocId = roomId;
+            if (!isObjectId) {
+                const room = await ChatRoom.findOne({ slug: roomId });
+                if (!room) {
+                    console.log('[chat:send] Room not found for slug/id:', roomId);
+                    return socket.emit('chat:error', { message: 'Room not found' });
+                }
+                roomDocId = room._id.toString();
+            }
             const doc = await ChatMessage.create({
-                room: roomId,
-                sender: socket.user?.id,
+                room: roomDocId,
+                sender: uid,
                 type,
                 message,
                 meta
-            })
+            });
 
             const payload = {
                 _id: doc._id,
@@ -118,18 +140,20 @@ io.on("connection", (socket) => {
                 message: doc.message,
                 meta: doc.meta,
                 createdAt: doc.createdAt
-            }
-            io.to(roomId).emit('chat:message', payload)
+            };
+            io.to(String(roomDocId)).emit('chat:message', payload);
+            console.log('[chat:send] OK room=%s msg=%s', roomDocId, (message || '').slice(0, 50));
         } catch (e) {
-            socket.emit('chat:error', { message: 'Failed to send message' })
+            console.error('[chat:send] Error:', e.message, e.stack);
+            socket.emit('chat:error', { message: e.message || 'Failed to send message' });
         }
     })
 
     // Delete message (soft)
     socket.on('chat:delete', async ({ messageId, roomId }) => {
         try {
-            await ChatMessage.findByIdAndUpdate(messageId, { deletedAt: new Date() })
-            io.to(roomId).emit('chat:deleted', { messageId })
+            await ChatMessage.findByIdAndUpdate(messageId, { deletedAt: new Date() });
+            io.to(String(roomId)).emit('chat:deleted', { messageId });
         } catch (e) {
             socket.emit('chat:error', { message: 'Failed to delete' })
         }

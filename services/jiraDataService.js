@@ -121,19 +121,24 @@ export const transformJiraIssueToTask = (issue) => {
 
 /**
  * Get JIRA projects for a user
+ * Normalizes response so frontend always gets an array (handles both array and paginated { values } from API).
  */
 export const getJiraProjects = async (userId) => {
     let jira = await createJiraClient(userId);
     try {
         const response = await jira.get('/project');
-        return response.data;
+        const data = response?.data;
+        const list = Array.isArray(data) ? data : (data?.values ?? []);
+        return list;
     } catch (error) {
         const status = error?.response?.status;
         if (status === 404 || status === 410) {
             await recoverJiraCloudId(userId);
             jira = await createJiraClient(userId);
             const response = await jira.get('/project');
-            return response.data;
+            const data = response?.data;
+            const list = Array.isArray(data) ? data : (data?.values ?? []);
+            return list;
         }
         throw error;
     }

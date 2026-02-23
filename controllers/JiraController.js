@@ -4,7 +4,8 @@ import {
     storeJiraCredentials,
     removeJiraCredentials,
     getUserJiraCredentials,
-    listAccessibleResources
+    listAccessibleResources,
+    updateJiraTokenOnly
 } from "../services/jiraOAuthService.js";
 import {
     getJiraProjects,
@@ -33,7 +34,8 @@ export const handleCallback = async (req, res) => {
     const userId = state; // We used userId as state
 
     if (!code) {
-        return res.redirect(`${process.env.FRONTEND_URL}/jira/error?message=Authorization failed`);
+        const base = process.env.FRONTEND_URL || 'http://localhost:5173';
+        return res.redirect(`${base}/jira/error?message=Authorization failed`);
     }
 
     try {
@@ -47,29 +49,39 @@ export const handleCallback = async (req, res) => {
         });
 
         const { access_token, refresh_token, expires_in } = tokenResponse.data;
+        const base = process.env.FRONTEND_URL || 'http://localhost:5173';
 
-        // 2. Get Cloud ID (accessible resources)
-        const resourcesResponse = await axios.get('https://api.atlassian.com/oauth/token/accessible-resources', {
-            headers: { 'Authorization': `Bearer ${access_token}` }
-        });
-
-        const resources = resourcesResponse.data || [];
-
-        const hasJiraScope = (resource) => {
-            const scopes = Array.isArray(resource?.scopes) ? resource.scopes : [];
-            return scopes.some((s) => {
-                if (typeof s !== "string") return false;
-                if (s === "read:jira-work" || s === "write:jira-work") return true;
-                if (s.startsWith("read:jira") || s.startsWith("write:jira")) return true;
-                if (s.includes(":jira")) return true;
-                return false;
+        // 2. Get Cloud ID (accessible resources) - can return 410 even with valid token
+        let cloudId;
+        try {
+            const resourcesResponse = await axios.get('https://api.atlassian.com/oauth/token/accessible-resources', {
+                headers: { 'Authorization': `Bearer ${access_token}` }
             });
-        };
+            const resources = resourcesResponse.data || [];
+            const hasJiraScope = (resource) => {
+                const scopes = Array.isArray(resource?.scopes) ? resource.scopes : [];
+                return scopes.some((s) => {
+                    if (typeof s !== "string") return false;
+                    if (s === "read:jira-work" || s === "write:jira-work") return true;
+                    if (s.startsWith("read:jira") || s.startsWith("write:jira")) return true;
+                    if (s.includes(":jira")) return true;
+                    return false;
+                });
+            };
+            const jiraResource = resources.find(hasJiraScope) || resources[0];
+            cloudId = jiraResource?.id;
+        } catch (resourcesErr) {
+            const status = resourcesErr?.response?.status;
+            if (status === 410 || status === 401) {
+                // Accessible-resources can return 410 for valid tokens; keep existing cloudId and just update token
+                const updated = await updateJiraTokenOnly(userId, access_token, refresh_token, expires_in);
+                if (updated) {
+                    return res.redirect(`${base}/jira/success`);
+                }
+            }
+            throw resourcesErr;
+        }
 
-        // Pick the resource that actually has Jira scopes, not just "the first one"
-        const jiraResource = resources.find(hasJiraScope) || resources[0];
-
-        const cloudId = jiraResource?.id;
         if (!cloudId) {
             throw new Error("No JIRA sites found for this account");
         }
@@ -77,10 +89,11 @@ export const handleCallback = async (req, res) => {
         // 3. Store credentials
         await storeJiraCredentials(userId, access_token, refresh_token, cloudId, expires_in);
 
-        res.redirect(`${process.env.FRONTEND_URL}/jira/success`);
+        res.redirect(`${base}/jira/success`);
     } catch (error) {
         console.error("JIRA Callback Error:", error.response?.data || error.message);
-        res.redirect(`${process.env.FRONTEND_URL}/jira/error?message=${encodeURIComponent(error.message)}`);
+        const base = process.env.FRONTEND_URL || 'http://localhost:5173';
+        res.redirect(`${base}/jira/error?message=${encodeURIComponent(error.message)}`);
     }
 };
 
@@ -161,7 +174,7 @@ export const debugJira = async (req, res) => {
 export const fetchProjects = async (req, res) => {
     try {
         const projects = await getJiraProjects(req.user._id);
-        res.json(projects);
+        res.json({ success: true, projects: Array.isArray(projects) ? projects : [] });
     } catch (error) {
         const upstreamStatus = error?.response?.status;
         const upstreamMessage = error?.response?.data?.message;
@@ -177,14 +190,15 @@ export const fetchProjects = async (req, res) => {
         }
 
         if (error.message?.includes("not connected")) {
-            return res.status(401).json({ message: error.message });
+            return res.status(401).json({ success: false, message: error.message });
         }
 
         if (error.message?.includes("reconnect your JIRA account") || error.message?.includes("not accessible")) {
-            return res.status(401).json({ message: error.message });
+            return res.status(401).json({ success: false, message: error.message });
         }
 
-        res.status(upstreamStatus || 500).json({
+        return res.status(upstreamStatus || 500).json({
+            success: false,
             message: upstreamMessage || error.message || "Failed to fetch JIRA projects"
         });
     }

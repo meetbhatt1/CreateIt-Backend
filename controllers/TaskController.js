@@ -45,8 +45,8 @@ export const updateTask = async (req, res) => {
             new: true,
         });
 
-        // Award XP if task is moved to Done/Completed and wasn't there before
-        if (['Done', 'Completed'].includes(status) && !['Done', 'Completed'].includes(oldStatus)) {
+        // Award XP if task is moved to done and wasn't there before (schema uses lowercase 'done')
+        if (status === 'done' && oldStatus !== 'done') {
             await addXP(req.user._id, 'COMPLETE_TASK');
         }
 

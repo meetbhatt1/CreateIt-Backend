@@ -4,6 +4,8 @@ import JiraCredentials from "../models/JiraCredentials.js";
 const ACCESSIBLE_RESOURCES_URL =
     "https://api.atlassian.com/oauth/token/accessible-resources";
 
+const RECONNECT_MSG = "JIRA connection is no longer valid. Please disconnect and reconnect your JIRA account in Settings.";
+
 const hasJiraScope = (resource) => {
     const scopes = Array.isArray(resource?.scopes) ? resource.scopes : [];
     return scopes.some((s) => {
@@ -79,11 +81,12 @@ export const refreshJiraToken = async (credentials) => {
 };
 
 /**
- * Create authenticated JIRA axios instance for a user
+ * Create authenticated JIRA axios instance for a user.
+ * Uses stored credentials only; does not call listAccessibleResources on every request.
+ * Sync/recovery runs only when a request fails with 410/404 (in getJiraProjects, getSimpleJiraTasks, etc.).
  */
 export const createJiraClient = async (userId) => {
-    // Keep stored cloudId aligned with the account's current accessible Jira sites.
-    const credentials = await syncJiraCloudId(userId);
+    const credentials = await getUserJiraCredentials(userId);
     if (!credentials) {
         throw new Error("JIRA not connected. Please connect your JIRA account first.");
     }
@@ -136,8 +139,30 @@ const testJiraCloudIdForProject = async ({ cloudId, accessToken, projectKey }) =
 };
 
 /**
+ * Test if stored cloudId + token still work by hitting the Jira API directly.
+ */
+const testStoredCredentials = async (credentials) => {
+    try {
+        await axios.get(
+            `https://api.atlassian.com/ex/jira/${credentials.cloudId}/rest/api/3/project`,
+            {
+                params: { maxResults: 1 },
+                headers: {
+                    Authorization: `Bearer ${credentials.accessToken}`,
+                    Accept: "application/json",
+                },
+            }
+        );
+        return true;
+    } catch (err) {
+        return false;
+    }
+};
+
+/**
  * Ensure stored cloudId is still valid for the user's Atlassian account.
  * If the saved cloudId is no longer accessible, update to the first available site.
+ * If listAccessibleResources returns 410/401, try using stored cloudId directly before giving up.
  */
 export const syncJiraCloudId = async (userId) => {
     const credentials = await getUserJiraCredentials(userId);
@@ -145,12 +170,31 @@ export const syncJiraCloudId = async (userId) => {
         throw new Error("JIRA not connected. Please connect your JIRA account first.");
     }
 
-    const resources = await listAccessibleResources(credentials.accessToken);
+    let resources;
+    try {
+        resources = await listAccessibleResources(credentials.accessToken);
+    } catch (listErr) {
+        const status = listErr?.response?.status;
+        if (status === 410 || status === 401) {
+            // Accessible-resources can return 410 even for valid tokens; try stored cloudId first
+            const stillWorks = await testStoredCredentials(credentials);
+            if (stillWorks) {
+                return credentials;
+            }
+            await JiraCredentials.deleteOne({ user: userId });
+            throw new Error(RECONNECT_MSG);
+        }
+        throw listErr;
+    }
     const preferred = resources.find((r) => r?.id === credentials.cloudId && hasJiraScope(r));
-    const jiraResource = resources.find(hasJiraScope);
+    const jiraResource = (resources || []).find(hasJiraScope);
     const cloudId = preferred?.id || jiraResource?.id;
 
     if (!cloudId) {
+        const stillWorks = await testStoredCredentials(credentials);
+        if (stillWorks) {
+            return credentials;
+        }
         await JiraCredentials.deleteOne({ _id: credentials._id });
         throw new Error("No JIRA sites found for this account. Please reconnect your JIRA account.");
     }
@@ -173,8 +217,20 @@ export const recoverJiraCloudId = async (userId) => {
         throw new Error("JIRA not connected. Please connect your JIRA account first.");
     }
 
-    const resources = await listAccessibleResources(credentials.accessToken);
-    const jiraResources = resources.filter(hasJiraScope);
+    let resources;
+    try {
+        resources = await listAccessibleResources(credentials.accessToken);
+    } catch (listErr) {
+        const status = listErr?.response?.status;
+        if (status === 410 || status === 401) {
+            const stillWorks = await testStoredCredentials(credentials);
+            if (stillWorks) return credentials;
+            await JiraCredentials.deleteOne({ user: userId });
+            throw new Error(RECONNECT_MSG);
+        }
+        throw listErr;
+    }
+    const jiraResources = (resources || []).filter(hasJiraScope);
 
     let lastStatus = null;
     for (const resource of jiraResources) {
@@ -220,8 +276,27 @@ export const recoverJiraCloudIdForProject = async (userId, projectKey) => {
         throw new Error("JIRA not connected. Please connect your JIRA account first.");
     }
 
-    const resources = await listAccessibleResources(credentials.accessToken);
-    const jiraResources = resources.filter(hasJiraScope);
+    let resources;
+    try {
+        resources = await listAccessibleResources(credentials.accessToken);
+    } catch (listErr) {
+        const status = listErr?.response?.status;
+        if (status === 410 || status === 401) {
+            try {
+                await testJiraCloudIdForProject({
+                    cloudId: credentials.cloudId,
+                    accessToken: credentials.accessToken,
+                    projectKey,
+                });
+                return credentials;
+            } catch (_) {
+                await JiraCredentials.deleteOne({ user: userId });
+                throw new Error(RECONNECT_MSG);
+            }
+        }
+        throw listErr;
+    }
+    const jiraResources = (resources || []).filter(hasJiraScope);
 
     let lastStatus = null;
     for (const resource of jiraResources) {
@@ -281,6 +356,19 @@ export const storeJiraCredentials = async (userId, accessToken, refreshToken, cl
         },
         { upsert: true, new: true }
     );
+};
+
+/**
+ * Update only token fields for existing credentials (e.g. when accessible-resources returns 410 but we have a valid cloudId).
+ */
+export const updateJiraTokenOnly = async (userId, accessToken, refreshToken, expiresIn) => {
+    const expiresAt = new Date(Date.now() + expiresIn * 1000);
+    const updated = await JiraCredentials.findOneAndUpdate(
+        { user: userId },
+        { accessToken, refreshToken, expiresAt, connectedAt: new Date() },
+        { new: true }
+    );
+    return updated;
 };
 
 /**

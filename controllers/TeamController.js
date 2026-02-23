@@ -420,9 +420,7 @@ export const respondToInvite = async (req, res) => {
 
 export const getUserInvitations = async (req, res) => {
     try {
-        console.log("GETUSERINVITATIONS+++++++++++++++++++");
-        const userId = new mongoose.Types.ObjectId(req?.params?.userId)
-        console.log("USER ID:", userId);
+        const userId = req.user?._id ? new mongoose.Types.ObjectId(req.user._id) : new mongoose.Types.ObjectId(req?.params?.userId);
         const pending = await Invite.find({
             userId,
             status: 'pending'
@@ -430,9 +428,6 @@ export const getUserInvitations = async (req, res) => {
             .populate('team', 'title') // Use 'title' instead of 'name'
             .populate('sender', 'fullName'); // Populate sender
 
-        console.log("PENDING:", pending);
-
-        // Remove Notification references
         const history = await Invite.find({
             userId,
             status: { $in: ['accepted', 'rejected'] }
@@ -441,7 +436,6 @@ export const getUserInvitations = async (req, res) => {
             .limit(10)
             .populate('team', 'title')
             .populate('sender', 'fullName');
-        console.log("HISTORY:", history);
 
         res.json({
             pending: pending.map(invite => ({

@@ -13,16 +13,17 @@ const userSchema = new mongoose.Schema({
     },
     phone: {
         type: String,
-        required: [true, 'Phone number is required'],
-        unique: true
+        required: false,
+        unique: true,
+        sparse: true
     },
     password: {
         type: String,
-        required: [true, 'Password is required']
+        required: false // optional for Google OAuth users
     },
     dob: {
         type: Date,
-        required: [true, 'Date of birth is required']
+        required: false
     },
     profileImage: {
         type: String,
@@ -40,14 +41,8 @@ const userSchema = new mongoose.Schema({
         type: String,
         enum: ['contributor', 'mock-interview', 'opensource-consumer', 'other']
     },
-    github: {
-        type: String,
-        required: [false]
-    },
-    linkedin: {
-        type: String,
-        required: [false]
-    },
+    github: { type: String },
+    linkedin: { type: String },
 
     xp: {
         type: Number,

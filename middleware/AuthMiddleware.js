@@ -124,18 +124,19 @@ export const auth = async (req, res, next) => {
             return res.status(401).json({ message: 'Please authenticate' });
         }
         const token = authHeader.replace('Bearer ', '');
-        console.log("Token :------------ ", token);
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        console.log("Decoded Token: -=-=-=-=-=-=-=", decoded);
-        const user = await User.findOne({ _id: decoded._id });
-        console.log("User +++++++++++", user);
+        const userId = decoded._id ?? decoded.id;
+        if (!userId) {
+            return res.status(401).json({ message: 'Invalid token' });
+        }
+        const user = await User.findOne({ _id: userId });
+        if (!user) {
+            return res.status(401).json({ message: 'User not found' });
+        }
         req.token = token;
         req.user = user;
-        console.log("Token:", token);
-        console.log("Decoded:", jwt.verify(token, process.env.JWT_SECRET));
-        console.log("User:", await User.findOne({ _id: decoded._id }));
         next();
     } catch (error) {
-        res.status(401).json({ message: 'Error auth:', error });
+        res.status(401).json({ message: 'Please authenticate' });
     }
 };
