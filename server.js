@@ -76,15 +76,15 @@ io.on("connection", (socket) => {
             if (!room) {
                 room = await ChatRoom.create({ slug, name: name || slug, description })
             }
-            // Enforce team membership if slug implies team room: team-{teamId}
-            if (slug.startsWith('team-')) {
-                const teamId = slug.replace('team-', '');
-                const userId = socket.user?.id ?? socket.user?._id;
-                if (!userId) return socket.emit('chat:error', { message: 'Unauthorized' });
-                const team = await Team.findById(teamId).lean()
+            // Enforce team membership if slug implies team room: team-{teamId} or plain 24-char team id
+            const teamIdFromSlug = slug.startsWith('team-') ? slug.replace('team-', '') : (/^[a-fA-F0-9]{24}$/.test(String(slug)) ? slug : null)
+            if (teamIdFromSlug) {
+                const userId = socket.user?.id ?? socket.user?._id
+                if (!userId) return socket.emit('chat:error', { message: 'Unauthorized' })
+                const team = await Team.findById(teamIdFromSlug).lean()
                 const isMember = team && (
                     String(team.owner) === String(userId) ||
-                    (team.members || []).some(m => String(m.user) === String(userId) && m.status === 'accepted')
+                    (team.members || []).some(m => String(m.user) === String(userId) && (m.status === 'accepted' || m.status === 'pending'))
                 )
                 if (!isMember) return socket.emit('chat:error', { message: 'Forbidden' })
             }

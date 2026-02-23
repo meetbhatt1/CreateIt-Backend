@@ -6,14 +6,32 @@ import { auth } from '../middleware/AuthMiddleware.js'
 
 const router = express.Router()
 
-/** For slug team-{teamId}, return true if user is team owner or accepted member. */
-async function isTeamRoomMember(slug, userId) {
-    if (!slug?.startsWith('team-') || !userId) return false
-    const teamId = slug.replace('team-', '')
+/** For slug team-{teamId} or plain teamId (24-char hex), return true if user is team owner or in members (accepted or pending). */
+async function isTeamRoomMember(slugOrTeamId, userId) {
+    if (!slugOrTeamId || userId == null) return false
+    const teamId = String(slugOrTeamId).startsWith('team-')
+        ? slugOrTeamId.replace('team-', '')
+        : slugOrTeamId
+    if (!/^[a-fA-F0-9]{24}$/.test(teamId)) return false
     const team = await Team.findById(teamId).lean()
     if (!team) return false
-    const uid = userId?.toString?.() ?? userId
-    return String(team.owner) === uid || (team.members || []).some(m => String(m?.user) === uid && m?.status === 'accepted')
+    const uid = userId != null ? (userId.toString?.() ?? String(userId)) : ''
+    if (!uid) return false
+    if (String(team.owner) === uid) return true
+    return (team.members || []).some(m => {
+        const mu = m?.user != null ? String(m.user) : ''
+        return mu === uid && (m?.status === 'accepted' || m?.status === 'pending')
+    })
+}
+
+/** Resolve room by slug. For team rooms, slug may be "team-<id>" or just "<id>" (24-char hex). */
+async function findRoomBySlug(slug) {
+    if (!slug) return null
+    let room = await ChatRoom.findOne({ slug })
+    if (room) return room
+    const tid = String(slug).startsWith('team-') ? slug.replace('team-', '') : slug
+    if (/^[a-fA-F0-9]{24}$/.test(tid)) room = await ChatRoom.findOne({ slug: `team-${tid}` })
+    return room ?? null
 }
 
 // Create a room (with authenticated user)
@@ -54,18 +72,20 @@ router.get('/available-rooms', auth, async (req, res) => {
 router.post('/rooms/:slug/join', auth, async (req, res) => {
     try {
         const { slug } = req.params
-        const room = await ChatRoom.findOne({ slug })
+        const room = await findRoomBySlug(slug)
 
         if (!room) return res.status(404).json({ message: 'Room not found' })
 
-        const userIdStr = req.user._id?.toString?.() ?? req.user._id
+        const userId = req.user._id ?? req.user.id
+        const userIdStr = userId?.toString?.() ?? String(userId)
         const inRoomMembers = room.members.some(m => (m?.toString?.() ?? m) === userIdStr)
         if (inRoomMembers) {
             return res.status(400).json({ message: 'Already a member' })
         }
 
-        if (slug.startsWith('team-')) {
-            const allowed = await isTeamRoomMember(slug, req.user._id)
+        const isTeamRoom = slug.startsWith('team-') || (room.slug && room.slug.startsWith('team-')) || /^[a-fA-F0-9]{24}$/.test(String(slug))
+        if (isTeamRoom) {
+            const allowed = await isTeamRoomMember(slug, userId) || (room.slug && room.slug !== slug && (await isTeamRoomMember(room.slug, userId)))
             if (!allowed) return res.status(403).json({ message: 'Not a member of this team' })
         }
 
@@ -83,14 +103,18 @@ router.get('/rooms/:slug/history', auth, async (req, res) => {
     try {
         const { slug } = req.params
         const { before, limit = 20 } = req.query
-        const room = await ChatRoom.findOne({ slug })
+        const room = await findRoomBySlug(slug)
 
         if (!room) return res.status(404).json({ message: 'Room not found' })
 
-        const userIdStr = req.user._id?.toString?.() ?? req.user._id
+        const userId = req.user._id ?? req.user.id
+        const userIdStr = userId?.toString?.() ?? String(userId)
         let isMember = room.members.some(m => (m?.toString?.() ?? m) === userIdStr)
-        if (!isMember && slug.startsWith('team-')) {
-            isMember = await isTeamRoomMember(slug, req.user._id)
+        if (!isMember) {
+            isMember = await isTeamRoomMember(slug, userId)
+            if (!isMember && room.slug && room.slug !== slug) {
+                isMember = await isTeamRoomMember(room.slug, userId)
+            }
         }
         if (!isMember) {
             return res.status(403).json({ message: 'Not a member of this room' })

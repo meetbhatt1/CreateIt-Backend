@@ -41,13 +41,20 @@ export const getProjectById = async (req, res) => {
     try {
         const project = await Project.findById(req.params.id)
             .populate("owner", "name email") // optional
-            .populate("members.user", "name email"); // optional
+            .populate("members.user", "name email") // optional
+            .lean();
 
         if (!project) {
             return res.status(404).json({ message: "Project not found" });
         }
 
-        res.json(project);
+        const userId = req.user?._id?.toString?.() ?? req.user?.id?.toString?.();
+        const likes = project.likes || [];
+        res.json({
+            ...project,
+            likesCount: likes.length,
+            likedByMe: !!userId && likes.some(id => (id && id.toString()) === userId)
+        });
     } catch (error) {
         res.status(500).json({ message: "Server error", error: error.message });
     }
@@ -56,14 +63,49 @@ export const getProjectById = async (req, res) => {
 // Get All Projects
 export const getAllProjects = async (req, res) => {
     try {
-        const projects = await Project.find().populate('owner', 'fullName email').sort({ createdAt: -1 });
-        res.json({ success: true, projects });
+        const projects = await Project.find().populate('owner', 'fullName email').sort({ createdAt: -1 }).lean();
+        const userId = req.user?._id?.toString?.() ?? req.user?.id?.toString?.();
+        const withLikes = projects.map(p => ({
+            ...p,
+            likesCount: (p.likes && p.likes.length) || 0,
+            likedByMe: !!userId && p.likes && p.likes.some(id => (id && id.toString()) === userId)
+        }));
+        res.json({ success: true, projects: withLikes });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
 };
 
-// Get My Projects (Owned or Member)
+// Like / unlike project (toggle)
+export const likeProject = async (req, res) => {
+    try {
+        const { projectId } = req.params;
+        const userId = req.user?._id ?? req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+        const project = await Project.findById(projectId);
+        if (!project) return res.status(404).json({ success: false, message: 'Project not found' });
+
+        if (!Array.isArray(project.likes)) project.likes = [];
+        const idStr = userId.toString();
+        const likes = project.likes || [];
+        const idx = likes.findIndex(id => (id && id.toString()) === idStr);
+        if (idx >= 0) {
+            project.likes.splice(idx, 1);
+        } else {
+            project.likes.push(userId);
+        }
+        await project.save();
+
+        res.json({
+            success: true,
+            likesCount: project.likes.length,
+            likedByMe: project.likes.some(id => (id && id.toString()) === idStr)
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
 export const getMyProjects = async (req, res) => {
     try {
         const userId = req.user?._id ?? req.params.id;
@@ -73,9 +115,16 @@ export const getMyProjects = async (req, res) => {
                 { owner: userId },
                 { 'members.user': userId }
             ]
-        }).populate('owner', 'fullName');
+        }).populate('owner', 'fullName').lean();
 
-        res.json({ success: true, projects: myProjects });
+        const uidStr = userId?.toString?.();
+        const withLikes = myProjects.map(p => ({
+            ...p,
+            likesCount: (p.likes && p.likes.length) || 0,
+            likedByMe: !!uidStr && p.likes && p.likes.some(id => (id && id.toString()) === uidStr)
+        }));
+
+        res.json({ success: true, projects: withLikes });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
@@ -111,6 +160,11 @@ export const requestAccess = async (req, res) => {
 //         if (!project) return res.status(404).json({ success: false, message: "Project not found" });
 
 //         const request = project.accessRequests.id(requestId);
+// Delete Project (owner only)
+// In deleteProject controller
+export const deleteProject = async (req, res) => {
+    try {
+        const { userId, projectId } = req.params;
 //         if (!request) return res.status(404).json({ success: false, message: "Request not found" });
 
 //         request.status = status;
@@ -129,11 +183,6 @@ export const requestAccess = async (req, res) => {
 //     }
 // };
 
-// Delete Project (owner only)
-// In deleteProject controller
-export const deleteProject = async (req, res) => {
-    try {
-        const { userId, projectId } = req.params;
 
         // Check if project exists and user is owner
         const project = await Project.findOne({ _id: projectId });

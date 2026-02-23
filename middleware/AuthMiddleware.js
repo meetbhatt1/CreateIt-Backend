@@ -140,3 +140,23 @@ export const auth = async (req, res, next) => {
         res.status(401).json({ message: 'Please authenticate' });
     }
 };
+
+/** Same as auth but does not require a token; sets req.user only when a valid token is present. */
+export const optionalAuth = async (req, res, next) => {
+    try {
+        const authHeader = req.header('Authorization');
+        if (!authHeader || !authHeader.startsWith('Bearer ')) return next();
+        const token = authHeader.replace('Bearer ', '');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const userId = decoded._id ?? decoded.id;
+        if (!userId) return next();
+        const user = await User.findOne({ _id: userId });
+        if (user) {
+            req.token = token;
+            req.user = user;
+        }
+        next();
+    } catch (_) {
+        next();
+    }
+};

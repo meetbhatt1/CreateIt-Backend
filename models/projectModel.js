@@ -54,8 +54,8 @@ const projectSchema = new Schema({
         envFile: String || null,
         dbFile: String
     },
-    screenshots: [String]
+    screenshots: [String],
+    likes: [{ type: Types.ObjectId, ref: 'User' }]
 }, { timestamps: true });
-// });
 
 export default mongoose.models.Project || mongoose.model("Project", projectSchema); 

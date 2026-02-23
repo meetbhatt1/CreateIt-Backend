@@ -4,9 +4,10 @@ import {
     getAllProjects,
     getMyProjects,
     getProjectById,
-    deleteProject
+    deleteProject,
+    likeProject
 } from '../controllers/ProjectController.js';
-import { auth } from '../middleware/AuthMiddleware.js';
+import { auth, optionalAuth } from '../middleware/AuthMiddleware.js';
 import multer from 'multer';
 import path from 'path';
 
@@ -46,9 +47,10 @@ router.post('/create', auth, upload.fields([
     { name: 'dbFile', maxCount: 1 },
     { name: 'screenshots', maxCount: 10 }
 ]), createProject);
-router.get('/all', getAllProjects);
+router.get('/all', optionalAuth, getAllProjects);
 router.get('/my-projects/:id', auth, getMyProjects);
-router.get('/:id', getProjectById);
+router.get('/:id', optionalAuth, getProjectById);
+router.post('/:projectId/like', auth, likeProject);
 router.delete('/:userId/:projectId', auth, deleteProject);
 
 export default router;

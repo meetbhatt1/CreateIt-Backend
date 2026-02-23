@@ -1,39 +1,44 @@
 /**
  * Mock interview / LeetCode integration using leetcode-query.
  * No auth required for: problem list, problem detail, daily challenge.
- * API: problems({ category, offset, limit, filters: { difficulty } }), problem(slug), daily()
  */
 
-let LeetCode;
-try {
-  const mod = await import("leetcode-query");
-  LeetCode = mod.LeetCode ?? mod.default?.LeetCode ?? mod.default;
-} catch (e) {
-  console.warn("[leetcode] leetcode-query not installed. Run: npm install leetcode-query");
-}
+let LeetCodeClass = null;
 
-function getClient() {
-  if (!LeetCode) throw new Error("leetcode-query is not available");
-  return new LeetCode();
+async function getClient() {
+  if (LeetCodeClass) return new LeetCodeClass();
+  try {
+    const mod = await import("leetcode-query");
+    LeetCodeClass = mod.LeetCode ?? mod.default?.LeetCode ?? mod.default;
+    if (!LeetCodeClass || typeof LeetCodeClass !== "function") {
+      throw new Error("leetcode-query did not export LeetCode");
+    }
+    return new LeetCodeClass();
+  } catch (e) {
+    const msg = e.code === "ERR_MODULE_NOT_FOUND" || e.message?.includes("Cannot find package")
+      ? "leetcode-query is not installed. Run: npm install leetcode-query"
+      : e.message;
+    throw new Error(msg);
+  }
 }
 
 /**
  * Get problem list. Filters: difficulty ('EASY'|'MEDIUM'|'HARD'), category (slug), limit, offset.
- * Returns problemsetQuestionList.questions from the package.
  */
 export async function getProblems(opts = {}) {
   const { difficulty, categorySlug, limit = 50, offset = 0 } = opts;
   try {
-    const lc = getClient();
+    const lc = await getClient();
     const result = await lc.problems({
       category: categorySlug || "",
-      offset,
-      limit,
+      offset: Number(offset) || 0,
+      limit: Math.min(Number(limit) || 50, 100),
       filters: difficulty ? { difficulty } : {},
     });
     const list = result?.problemsetQuestionList ?? result;
     const questions = list?.questions ?? (Array.isArray(list) ? list : []);
-    return { success: true, problems: Array.isArray(questions) ? questions : [] };
+    const arr = Array.isArray(questions) ? questions : [];
+    return { success: true, problems: arr };
   } catch (err) {
     console.error("[leetcode] getProblems error:", err.message);
     return { success: false, problems: [], error: err.message };
@@ -44,10 +49,12 @@ export async function getProblems(opts = {}) {
  * Get a single problem by title slug (e.g. "two-sum").
  */
 export async function getProblem(titleSlug) {
-  if (!titleSlug) return { success: false, problem: null, error: "titleSlug required" };
+  if (!titleSlug || !String(titleSlug).trim()) {
+    return { success: false, problem: null, error: "titleSlug required" };
+  }
   try {
-    const lc = getClient();
-    const slug = titleSlug.toLowerCase().replace(/\s/g, "-");
+    const lc = await getClient();
+    const slug = String(titleSlug).toLowerCase().replace(/\s+/g, "-");
     const problem = await lc.problem(slug);
     return { success: true, problem: problem ?? null };
   } catch (err) {
@@ -61,7 +68,7 @@ export async function getProblem(titleSlug) {
  */
 export async function getDailyChallenge() {
   try {
-    const lc = getClient();
+    const lc = await getClient();
     const daily = await lc.daily();
     return { success: true, daily: daily ?? null };
   } catch (err) {
