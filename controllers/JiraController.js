@@ -3,7 +3,8 @@ import {
     isJiraConnected,
     storeJiraCredentials,
     removeJiraCredentials,
-    getUserJiraCredentials
+    getUserJiraCredentials,
+    listAccessibleResources
 } from "../services/jiraOAuthService.js";
 import {
     getJiraProjects,
@@ -52,7 +53,23 @@ export const handleCallback = async (req, res) => {
             headers: { 'Authorization': `Bearer ${access_token}` }
         });
 
-        const cloudId = resourcesResponse.data[0]?.id;
+        const resources = resourcesResponse.data || [];
+
+        const hasJiraScope = (resource) => {
+            const scopes = Array.isArray(resource?.scopes) ? resource.scopes : [];
+            return scopes.some((s) => {
+                if (typeof s !== "string") return false;
+                if (s === "read:jira-work" || s === "write:jira-work") return true;
+                if (s.startsWith("read:jira") || s.startsWith("write:jira")) return true;
+                if (s.includes(":jira")) return true;
+                return false;
+            });
+        };
+
+        // Pick the resource that actually has Jira scopes, not just "the first one"
+        const jiraResource = resources.find(hasJiraScope) || resources[0];
+
+        const cloudId = jiraResource?.id;
         if (!cloudId) {
             throw new Error("No JIRA sites found for this account");
         }
@@ -92,6 +109,53 @@ export const disconnectJira = async (req, res) => {
 };
 
 /**
+ * Debug JIRA OAuth + cloudId mapping (dev helper)
+ */
+export const debugJira = async (req, res) => {
+    try {
+        const creds = await getUserJiraCredentials(req.user._id);
+        if (!creds) {
+            return res.status(200).json({ connected: false });
+        }
+
+        const resources = await listAccessibleResources(creds.accessToken);
+        const jiraResources = (resources || []).filter((r) =>
+            Array.isArray(r?.scopes) && r.scopes.includes("read:jira-work")
+        );
+
+        const results = [];
+        for (const r of jiraResources) {
+            const cloudId = r?.id;
+            if (!cloudId) continue;
+
+            try {
+                await axios.get(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/myself`, {
+                    headers: { Authorization: `Bearer ${creds.accessToken}`, Accept: "application/json" }
+                });
+                results.push({ id: cloudId, name: r?.name, url: r?.url, ok: true });
+            } catch (error) {
+                results.push({
+                    id: cloudId,
+                    name: r?.name,
+                    url: r?.url,
+                    ok: false,
+                    status: error?.response?.status || null,
+                    message: error?.response?.data?.message || error.message
+                });
+            }
+        }
+
+        res.status(200).json({
+            connected: true,
+            storedCloudId: creds.cloudId,
+            jiraResources: results
+        });
+    } catch (error) {
+        res.status(500).json({ message: error.message || "Debug failed" });
+    }
+};
+
+/**
  * Get JIRA projects
  */
 export const fetchProjects = async (req, res) => {
@@ -99,9 +163,29 @@ export const fetchProjects = async (req, res) => {
         const projects = await getJiraProjects(req.user._id);
         res.json(projects);
     } catch (error) {
-        console.error("Fetch JIRA Projects Error:", error.message);
-        res.status(error.message.includes("not connected") ? 401 : 500).json({
-            message: error.message
+        const upstreamStatus = error?.response?.status;
+        const upstreamMessage = error?.response?.data?.message;
+
+        console.error("Fetch JIRA Projects Error full:", error);
+        console.error("Fetch JIRA Projects Error status:", upstreamStatus);
+        console.error("Fetch JIRA Projects Error message:", upstreamMessage || error.message);
+
+        if (upstreamStatus === 410) {
+            // Sites with 410 status should be handled by recoverJiraCloudId in the service.
+            // If it escapes to here, it might be a transient Atlassian error.
+            console.warn("JIRA site returned 410 - recovery should have been attempted.");
+        }
+
+        if (error.message?.includes("not connected")) {
+            return res.status(401).json({ message: error.message });
+        }
+
+        if (error.message?.includes("reconnect your JIRA account") || error.message?.includes("not accessible")) {
+            return res.status(401).json({ message: error.message });
+        }
+
+        res.status(upstreamStatus || 500).json({
+            message: upstreamMessage || error.message || "Failed to fetch JIRA projects"
         });
     }
 };
@@ -115,9 +199,28 @@ export const fetchIssues = async (req, res) => {
         const issues = await getJiraIssuesGrouped(req.user._id, projectKey);
         res.json(issues);
     } catch (error) {
-        console.error("Fetch JIRA Issues Error:", error.message);
-        res.status(error.message.includes("not connected") ? 401 : 500).json({
-            message: error.message
+        const upstreamStatus = error?.response?.status;
+        const upstreamMessage = error?.response?.data?.message;
+
+        console.error("Fetch JIRA Issues Error full:", error);
+        console.error("Fetch JIRA Issues Error status:", upstreamStatus);
+        console.error("Fetch JIRA Issues Error message:", upstreamMessage || error.message);
+
+        if (upstreamStatus === 410) {
+            // Transient 410 or recovery failure
+            console.warn("JIRA site returned 410 - recovery should have been attempted.");
+        }
+
+        if (error.message?.includes("not connected")) {
+            return res.status(401).json({ message: error.message });
+        }
+
+        if (error.message?.includes("reconnect your JIRA account") || error.message?.includes("not accessible")) {
+            return res.status(401).json({ message: error.message });
+        }
+
+        res.status(upstreamStatus || 500).json({
+            message: upstreamMessage || error.message || "Failed to fetch JIRA issues"
         });
     }
 };

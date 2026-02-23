@@ -42,8 +42,8 @@ export const updateJiraStatus = async (issueId, transitionId) => {
 };
 
 export const getJiraIssues = async (jql) => {
-    const res = await jira.get("/search", {
-        params: { jql }
+    const res = await jira.post("/search", {
+        jql
     });
     return res.data.issues;
 };

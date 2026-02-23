@@ -1,4 +1,8 @@
-import { createJiraClient } from "./jiraOAuthService.js";
+import {
+    createJiraClient,
+    recoverJiraCloudId,
+    recoverJiraCloudIdForProject,
+} from "./jiraOAuthService.js";
 
 /**
  * Map JIRA issue status to CreateIt Kanban status
@@ -51,7 +55,7 @@ const mapJiraStatusToKanban = (jiraStatus) => {
  */
 const mapJiraPriorityToKanban = (jiraPriority) => {
     if (!jiraPriority) return 'medium';
-    
+
     const priorityMap = {
         'Highest': 'high',
         'High': 'high',
@@ -71,7 +75,7 @@ export const transformJiraIssueToTask = (issue) => {
     const status = fields.status?.name || 'To Do';
     const priority = fields.priority?.name || 'Medium';
     const assignee = fields.assignee?.displayName || fields.assignee?.emailAddress || 'Unassigned';
-    
+
     // Extract description text (handle ADF format)
     let description = '';
     if (fields.description) {
@@ -119,21 +123,49 @@ export const transformJiraIssueToTask = (issue) => {
  * Get JIRA projects for a user
  */
 export const getJiraProjects = async (userId) => {
-    const jira = await createJiraClient(userId);
-    const response = await jira.get('/project');
-    return response.data;
+    let jira = await createJiraClient(userId);
+    try {
+        const response = await jira.get('/project');
+        return response.data;
+    } catch (error) {
+        const status = error?.response?.status;
+        if (status === 404 || status === 410) {
+            await recoverJiraCloudId(userId);
+            jira = await createJiraClient(userId);
+            const response = await jira.get('/project');
+            return response.data;
+        }
+        throw error;
+    }
 };
 
 /**
  * Get JIRA issues for a project
  */
 export const getJiraIssuesForProject = async (userId, projectKey) => {
-    const jira = await createJiraClient(userId);
+    let jira = await createJiraClient(userId);
     const jql = `project = ${projectKey} ORDER BY updated DESC`;
-    const response = await jira.get('/search', {
-        params: { jql, maxResults: 100 }
-    });
-    return response.data.issues || [];
+
+    try {
+        const response = await jira.post('/search', {
+            jql,
+            maxResults: 100
+        });
+        return response.data.issues || [];
+    } catch (error) {
+        const status = error?.response?.status;
+        if (status === 404 || status === 410) {
+            // Prefer project-specific recovery so we bind to the Jira site that contains this project key.
+            await recoverJiraCloudIdForProject(userId, projectKey);
+            jira = await createJiraClient(userId);
+            const response = await jira.post('/search', {
+                jql,
+                maxResults: 100
+            });
+            return response.data.issues || [];
+        }
+        throw error;
+    }
 };
 
 /**

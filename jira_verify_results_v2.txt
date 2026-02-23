@@ -1,0 +1,15 @@
+--- Jira Verification V2 Start ---
+Connected to DB
+Found user ID: 68866d263df2ca4abbc384ce
+Testing getJiraIssuesForProject('KAN')...
+getJiraIssuesForProject Error: Request failed with status code 410
+Status: 410
+Data: {
+  "errorMessages": [
+    "The requested API has been removed. Please migrate to the /rest/api/3/search/jql API. A full migration guideline is available at https://developer.atlassian.com/changelog/#CHANGE-2046"
+  ],
+  "errors": {}
+}
+URL: /search
+Params: {"jql":"project = KAN ORDER BY updated DESC","maxResults":100}
+--- Jira Verification V2 End ---

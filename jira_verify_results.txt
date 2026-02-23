@@ -1,0 +1,15 @@
+--- Jira Verification Start ---
+Connected to DB
+Found user ID: 68866d263df2ca4abbc384ce
+Stored CloudId: bf425d23-93af-46e3-9ece-0a9bdcfafe73
+Token expires at: Wed Feb 11 2026 01:26:41 GMT+0530 (India Standard Time)
+Testing listAccessibleResources...
+Accessible resources found: 1
+ - Resource: createit-dev (bf425d23-93af-46e3-9ece-0a9bdcfafe73)
+   Scopes: ["read:jira-user","read:jira-work","write:jira-work"]
+Running syncJiraCloudId...
+Synced CloudId: bf425d23-93af-46e3-9ece-0a9bdcfafe73
+Fetching projects (this uses cloudId)...
+Fetched projects count: 1
+ - Project: KAN (createit)
+--- Jira Verification End ---

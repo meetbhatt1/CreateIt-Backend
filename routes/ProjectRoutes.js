@@ -47,8 +47,8 @@ router.post('/create', upload.fields([
     { name: 'screenshots', maxCount: 10 }
 ]), createProject);
 router.get('/all', getAllProjects);
-router.get('/:id', getProjectById);
 router.get('/my-projects/:id', getMyProjects);
+router.get('/:id', getProjectById);
 router.delete('/:userId/:projectId', deleteProject);
 
 export default router;
