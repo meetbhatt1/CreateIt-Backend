@@ -8,6 +8,7 @@ import {
     likeProject
 } from '../controllers/ProjectController.js';
 import { auth, optionalAuth } from '../middleware/AuthMiddleware.js';
+import { validateObjectId } from '../middleware/validateObjectId.js';
 import multer from 'multer';
 import path from 'path';
 
@@ -22,6 +23,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage: storage,
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB per file
     fileFilter: function (req, file, cb) {
         // Allow .zip for zip fields, images for screenshots
         if (file.fieldname === 'screenshots') {
@@ -48,9 +50,9 @@ router.post('/create', auth, upload.fields([
     { name: 'screenshots', maxCount: 10 }
 ]), createProject);
 router.get('/all', optionalAuth, getAllProjects);
-router.get('/my-projects/:id', auth, getMyProjects);
-router.get('/:id', optionalAuth, getProjectById);
-router.post('/:projectId/like', auth, likeProject);
-router.delete('/:userId/:projectId', auth, deleteProject);
+router.get('/my-projects/:id', auth, validateObjectId('id'), getMyProjects);
+router.get('/:id', optionalAuth, validateObjectId('id'), getProjectById);
+router.post('/:projectId/like', auth, validateObjectId('projectId'), likeProject);
+router.delete('/:userId/:projectId', auth, validateObjectId(['userId', 'projectId']), deleteProject);
 
 export default router;

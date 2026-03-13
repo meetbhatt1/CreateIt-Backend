@@ -38,11 +38,28 @@ export const SignUpUser = async (req, res) => {
         // Save the user to DB!!
         await newUser.save();
 
-        // Responding..!
-        res.status(201).json({ message: "🎉 Registration successful! You’re in the CreateIt now!" });
-        // Pending: Tokens
+        
+        // Send OTP so user can verify (frontend shows OTP screen)
+        const otp = Math.floor(100000 + Math.random() * 900000);
+        newUser.otp = otp;
+        newUser.otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
+        await newUser.save();
+        try {
+            await sendEmail({ to: email, subject: 'Your CreateIt Verification Code', text: `Your code is: ${otp}` });
+        } catch (emailErr) {
+            console.error('Signup sendEmail error:', emailErr);
+            return res.status(500).json({ message: 'Account created but verification email failed. Try Resend OTP or login.' });
+        }
+        res.status(201).json({ message: "Check your email for the verification code to finish signing up!" });
     } catch (error) {
         console.error("Registration Error:", error);
+        if (error.code === 11000) {
+            return res.status(400).json({ message: "😬 Email or phone already registered!" });
+        }
+        if (error.name === 'ValidationError') {
+            const msg = Object.values(error.errors || {}).map(e => e.message).join(' ');
+            return res.status(400).json({ message: msg || 'Validation failed' });
+        }
         res.status(500).json({ message: "💥 Server blew up. Try again later." });
     }
 };
@@ -120,8 +137,10 @@ export const verifyOTP = async (req, res) => {
         const { email, otp } = req.body;
         const user = await User.findOne({ email });
 
-        if (!user || user.otp !== otp || user.otpExpiry < Date.now()) {
-            return res.status(400).json({ message: "Invalid/expired OTP" });
+        const otpStr = String(otp).trim();
+        const storedOtp = user?.otp != null ? String(user.otp) : '';
+        if (!user || storedOtp !== otpStr || !user.otpExpiry || new Date(user.otpExpiry) < new Date()) {
+            return res.status(400).json({ message: "Invalid or expired verification code. Try again or resend." });
         }
 
         user.isVerified = true;
@@ -157,18 +176,20 @@ export const googleAuth = async (req, res) => {
         // Create new user for Google auth
         user = await User.create({
             email: req.user.email,
-            fullName: req.user.displayName,
-            profileImage: req.user.photos[0].value,
+            fullName: req.user.displayName || req.user.email?.split('@')[0] || 'User',
+            profileImage: req.user.photos?.[0]?.value,
             isGoogleAuth: true,
-            isVerified: true // Google users auto-verified
+            isVerified: true
         });
     }
 
+    const userId = user._id;
     const token = jwt.sign(
-            { _id: req.user._id, id: req.user._id, email: req.user.email },
-            process.env.JWT_SECRET,
-            { expiresIn: '7d' }
+        { _id: userId, id: userId, email: user.email },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
     );
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    // const frontendUrl = process.env.FRONTEND_URL_PROD || process.env.FRONTEND_URL_DEV;
+    const frontendUrl = process.env.FRONTEND_URL_DEV;
     res.redirect(`${frontendUrl}/oauth-success?token=${token}`);
 }

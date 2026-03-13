@@ -70,12 +70,13 @@ const registerValidation = Joi.object({
 export const validateRegister = (req, res, next) => {
     const { error } = registerValidation.validate(req.body, {
         abortEarly: false,
-        allowUnknown: false, // ensures no unknown fields are passed
+        allowUnknown: true, // allow extra fields (e.g. confirmPassword) so they are stripped
     });
 
     if (error) {
         const messages = error.details.map(err => err.message);
-        return res.status(400).json({ errors: messages });
+        const message = messages.join(' ');
+        return res.status(400).json({ errors: messages, message });
     }
 
     next();

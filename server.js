@@ -3,6 +3,8 @@ import cors from "cors"
 import morgan from 'morgan'
 import colors from "colors"
 import dotenv from "dotenv"
+import helmet from "helmet"
+import rateLimit from "express-rate-limit"
 import AuthRoute from './routes/AuthRoute.js'
 import ProjectRoutes from './routes/ProjectRoutes.js'
 import TeamRoutes from './routes/TeamRoutes.js'
@@ -17,22 +19,49 @@ import ChatRoom from './models/ChatRoom.js'
 import { createSocketAuthMiddleware } from './middleware/SocketAuth.js'
 import Team from './models/Team.js'
 import DBConnection from './config/db.js'
+import { validateEnv, getCorsOrigin, isProduction } from './config/env.js'
+import { errorHandler } from './middleware/errorHandler.js'
 import passport from 'passport'
+import mongoose from 'mongoose'
 import { createServer } from "http"
 import { Server } from "socket.io"
 
 dotenv.config()
+validateEnv()
+
+const isProd = process.env.NODE_ENV === 'production'
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', isProd ? 'see logs' : reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', isProd ? err.message : err)
+  process.exit(1)
+})
+
 DBConnection()
 
 const app = express()
 
-// CORS setup
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }))
+app.use(morgan(isProduction ? 'combined' : 'dev'))
+app.use(express.json({ limit: '512kb' }))
+
+const corsOrigin = getCorsOrigin()
 app.use(cors({
-    origin: true, // reflect request origin in dev so LAN devices can connect
-    credentials: true
+  origin: Array.isArray(corsOrigin) && corsOrigin.length ? corsOrigin : corsOrigin,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }))
-app.use(express.json())
-app.use(morgan('dev'))
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isProduction ? 200 : 500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests' },
+})
+app.use(limiter)
 
 // Routes
 app.use(passport.initialize())
@@ -49,13 +78,28 @@ app.use('/api/jira', JiraRoutes)
 app.use('/api/dashboard', DashboardRoutes)
 app.use('/api/mock-interview', MockInterviewRoutes)
 
+app.get("/api/health", async (req, res) => {
+  const dbState = mongoose.connection.readyState
+  const ok = dbState === 1
+  res.status(ok ? 200 : 503).json({
+    ok,
+    message: ok ? 'OK' : 'Service unavailable',
+    db: dbState === 1 ? 'connected' : 'disconnected',
+  })
+})
+
+app.use((req, res, next) => {
+  res.status(404).json({ success: false, message: 'Not found' })
+})
+app.use(errorHandler)
+
 // ✅ Create HTTP server
 const httpServer = createServer(app)
 
 // ✅ Attach Socket.IO
 const io = new Server(httpServer, {
     cors: {
-        origin: true,
+        origin: Array.isArray(corsOrigin) && corsOrigin.length ? corsOrigin : true,
         methods: ["GET", "POST"],
         credentials: true
     }
@@ -64,10 +108,11 @@ const io = new Server(httpServer, {
 // Secure sockets with JWT
 createSocketAuthMiddleware(io)
 
-let users = {}
+const devLog = (...args) => { if (!isProduction) console.log(...args) }
+const devError = (...args) => { if (!isProduction) console.error(...args) }
 
 io.on("connection", (socket) => {
-    console.log("⚡ User connected:", socket.id, socket.user)
+    devLog("⚡ User connected:", socket.id)
 
     // Join room by slug
     socket.on('chat:join', async ({ slug, name, description }) => {
@@ -91,10 +136,10 @@ io.on("connection", (socket) => {
             const roomIdStr = room._id.toString();
             socket.join(roomIdStr);
             socket.emit('chat:joined', { roomId: roomIdStr, slug });
-            console.log('[chat:join] slug=%s roomId=%s', slug, roomIdStr);
+            devLog('[chat:join] slug=%s roomId=%s', slug, roomIdStr);
         } catch (e) {
-            console.error('[chat:join] Error:', e.message);
-            socket.emit('chat:error', { message: 'Failed to join room' });
+            if (isProduction) socket.emit('chat:error', { message: 'Failed to join room' });
+            else { console.error('[chat:join] Error:', e.message); socket.emit('chat:error', { message: e.message || 'Failed to join room' }); }
         }
     })
 
@@ -108,11 +153,9 @@ io.on("connection", (socket) => {
         try {
             const uid = socket.user?.id ?? socket.user?._id;
             if (!uid) {
-                console.log('[chat:send] Unauthorized: no user');
                 return socket.emit('chat:error', { message: 'Unauthorized' });
             }
             if (!roomId) {
-                console.log('[chat:send] Missing roomId');
                 return socket.emit('chat:error', { message: 'Missing room' });
             }
             // roomId may be ChatRoom._id (24-char hex) or slug (e.g. team-xxx); resolve to ObjectId for DB
@@ -121,7 +164,6 @@ io.on("connection", (socket) => {
             if (!isObjectId) {
                 const room = await ChatRoom.findOne({ slug: roomId });
                 if (!room) {
-                    console.log('[chat:send] Room not found for slug/id:', roomId);
                     return socket.emit('chat:error', { message: 'Room not found' });
                 }
                 roomDocId = room._id.toString();
@@ -144,10 +186,10 @@ io.on("connection", (socket) => {
                 createdAt: doc.createdAt
             };
             io.to(String(roomDocId)).emit('chat:message', payload);
-            console.log('[chat:send] OK room=%s msg=%s', roomDocId, (message || '').slice(0, 50));
+            devLog('[chat:send] OK room=%s', roomDocId);
         } catch (e) {
-            console.error('[chat:send] Error:', e.message, e.stack);
-            socket.emit('chat:error', { message: e.message || 'Failed to send message' });
+            if (!isProduction) console.error('[chat:send] Error:', e.message);
+            socket.emit('chat:error', { message: isProduction ? 'Failed to send message' : (e.message || 'Failed to send message') });
         }
     })
 
@@ -162,12 +204,22 @@ io.on("connection", (socket) => {
     })
 
     socket.on("disconnect", () => {
-        console.log("❌ User disconnected:", socket.id)
+        devLog("❌ User disconnected:", socket.id)
     })
 })
 
-// ✅ Start server
 const PORT = process.env.PORT || 8000
-httpServer.listen(PORT, () =>
-    console.log(`Server running on port ${PORT}`.white.bgMagenta)
-)
+const server = httpServer.listen(PORT, () => {
+    if (!isProduction) console.log(`Server running on port ${PORT}`.white.bgMagenta)
+})
+
+function gracefulShutdown(signal) {
+    server.close(() => {
+        mongoose.connection.close(false).then(() => {
+            process.exit(0)
+        }).catch(() => process.exit(1))
+    })
+    setTimeout(() => process.exit(1), 10000)
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+process.on('SIGINT', () => gracefulShutdown('SIGINT'))

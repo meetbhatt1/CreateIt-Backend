@@ -26,6 +26,10 @@ const jiraCredentialsSchema = new mongoose.Schema({
     connectedAt: {
         type: Date,
         default: Date.now
+    },
+    jiraSiteUrl: {
+        type: String,
+        default: null
     }
 }, { timestamps: true });
 

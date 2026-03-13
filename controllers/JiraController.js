@@ -5,11 +5,17 @@ import {
     removeJiraCredentials,
     getUserJiraCredentials,
     listAccessibleResources,
-    updateJiraTokenOnly
+    updateJiraTokenOnly,
 } from "../services/jiraOAuthService.js";
 import {
     getJiraProjects,
-    getJiraIssuesGrouped
+    getJiraIssuesGrouped,
+    getJiraIssueByKey,
+    createJiraIssue,
+    updateJiraIssue,
+    deleteJiraIssue,
+    transitionJiraIssue,
+    transformJiraIssueToTask,
 } from "../services/jiraDataService.js";
 
 /**
@@ -34,7 +40,8 @@ export const handleCallback = async (req, res) => {
     const userId = state; // We used userId as state
 
     if (!code) {
-        const base = process.env.FRONTEND_URL || 'http://localhost:5173';
+        // const base = process.env.FRONTEND_URL_PROD || process.env.FRONTEND_URL_DEV;
+        const base = process.env.FRONTEND_URL_DEV;
         return res.redirect(`${base}/jira/error?message=Authorization failed`);
     }
 
@@ -49,10 +56,12 @@ export const handleCallback = async (req, res) => {
         });
 
         const { access_token, refresh_token, expires_in } = tokenResponse.data;
-        const base = process.env.FRONTEND_URL || 'http://localhost:5173';
+        // const base = process.env.FRONTEND_URL_PROD || process.env.FRONTEND_URL_DEV;
+        const base = process.env.FRONTEND_URL_DEV;
 
-        // 2. Get Cloud ID (accessible resources) - can return 410 even with valid token
+        // 2. Get Cloud ID and optional site URL (accessible resources) - can return 410 even with valid token
         let cloudId;
+        let siteUrl = null;
         try {
             const resourcesResponse = await axios.get('https://api.atlassian.com/oauth/token/accessible-resources', {
                 headers: { 'Authorization': `Bearer ${access_token}` }
@@ -70,6 +79,9 @@ export const handleCallback = async (req, res) => {
             };
             const jiraResource = resources.find(hasJiraScope) || resources[0];
             cloudId = jiraResource?.id;
+            if (typeof jiraResource?.url === "string" && jiraResource.url.trim()) {
+                siteUrl = jiraResource.url.replace(/\/$/, "");
+            }
         } catch (resourcesErr) {
             const status = resourcesErr?.response?.status;
             if (status === 410 || status === 401) {
@@ -86,13 +98,14 @@ export const handleCallback = async (req, res) => {
             throw new Error("No JIRA sites found for this account");
         }
 
-        // 3. Store credentials
-        await storeJiraCredentials(userId, access_token, refresh_token, cloudId, expires_in);
+        // 3. Store credentials (include siteUrl for "Open in JIRA" browse links)
+        await storeJiraCredentials(userId, access_token, refresh_token, cloudId, expires_in, siteUrl);
 
         res.redirect(`${base}/jira/success`);
     } catch (error) {
         console.error("JIRA Callback Error:", error.response?.data || error.message);
-        const base = process.env.FRONTEND_URL || 'http://localhost:5173';
+        //  const base = process.env.FRONTEND_URL_PROD || process.env.FRONTEND_URL_DEV;
+        const base = process.env.FRONTEND_URL_DEV;
         res.redirect(`${base}/jira/error?message=${encodeURIComponent(error.message)}`);
     }
 };
@@ -236,5 +249,105 @@ export const fetchIssues = async (req, res) => {
         res.status(upstreamStatus || 500).json({
             message: upstreamMessage || error.message || "Failed to fetch JIRA issues"
         });
+    }
+};
+
+/**
+ * Create JIRA issue — POST /api/jira/issues
+ * Body: { projectKey, summary, description?, status? }
+ */
+export const createIssue = async (req, res) => {
+    const { projectKey, summary, description, status } = req.body || {};
+    if (!projectKey || !summary) {
+        return res.status(400).json({ message: "projectKey and summary are required" });
+    }
+    try {
+        const created = await createJiraIssue(req.user._id, { projectKey, summary, description, status });
+        const issueKey = created?.key;
+        if (!issueKey) {
+            return res.status(201).json(created);
+        }
+        const credentials = await getUserJiraCredentials(req.user._id);
+        const siteUrl = credentials?.jiraSiteUrl || null;
+        const fullIssue = await getJiraIssueByKey(req.user._id, issueKey);
+        const task = transformJiraIssueToTask(fullIssue, siteUrl);
+        return res.status(201).json(task);
+    } catch (error) {
+        const msg = error.message || "Failed to create JIRA issue";
+        const statusCode = error?.response?.status;
+        if (error.message?.includes("not connected")) {
+            return res.status(401).json({ message: error.message });
+        }
+        return res.status(statusCode && statusCode >= 400 ? statusCode : 500).json({ message: msg });
+    }
+};
+
+/**
+ * Update JIRA issue — PATCH /api/jira/issues/:issueKey
+ * Body: { summary?, description?, priority?, assignee?, due? }
+ */
+export const updateIssue = async (req, res) => {
+    const { issueKey } = req.params;
+    const { summary, description, priority, assignee, due } = req.body || {};
+    if (!issueKey) {
+        return res.status(400).json({ message: "issueKey is required" });
+    }
+    try {
+        await updateJiraIssue(req.user._id, issueKey, { summary, description, priority, assignee, due });
+        return res.json({ success: true });
+    } catch (error) {
+        const msg = error.message || "Failed to update JIRA issue";
+        const statusCode = error?.response?.status;
+        if (error.message?.includes("not connected")) {
+            return res.status(401).json({ message: error.message });
+        }
+        return res.status(statusCode && statusCode >= 400 ? statusCode : 500).json({ message: msg });
+    }
+};
+
+/**
+ * Delete JIRA issue — DELETE /api/jira/issues/:issueKey
+ */
+export const deleteIssue = async (req, res) => {
+    const { issueKey } = req.params;
+    if (!issueKey) {
+        return res.status(400).json({ message: "issueKey is required" });
+    }
+    try {
+        await deleteJiraIssue(req.user._id, issueKey);
+        return res.json({ success: true });
+    } catch (error) {
+        const msg = error.message || "Failed to delete JIRA issue";
+        const statusCode = error?.response?.status;
+        if (error.message?.includes("not connected")) {
+            return res.status(401).json({ message: error.message });
+        }
+        return res.status(statusCode && statusCode >= 400 ? statusCode : 500).json({ message: msg });
+    }
+};
+
+/**
+ * Transition JIRA issue status — PATCH /api/jira/issues/:issueKey/transition
+ * Body: { status: "To Do" | "In Progress" | "Review" | "Done" }
+ */
+export const transitionIssue = async (req, res) => {
+    const { issueKey } = req.params;
+    const { status } = req.body || {};
+    if (!issueKey) {
+        return res.status(400).json({ message: "issueKey is required" });
+    }
+    if (!status) {
+        return res.status(400).json({ message: "status is required" });
+    }
+    try {
+        await transitionJiraIssue(req.user._id, issueKey, { status });
+        return res.json({ success: true });
+    } catch (error) {
+        const msg = error.message || "Failed to transition JIRA issue";
+        const statusCode = error?.response?.status;
+        if (error.message?.includes("not connected")) {
+            return res.status(401).json({ message: error.message });
+        }
+        return res.status(statusCode && statusCode >= 400 ? statusCode : 500).json({ message: msg });
     }
 };

@@ -1,10 +1,20 @@
 import User from '../models/userModel.js';
 import Team from '../models/Team.js';
+import TeamExcalidraw from '../models/TeamExcalidraw.js';
 import Invite from '../models/Invite.js';
 import JoinRequest from '../models/JoinRequests.js';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { formatDistanceToNow } from 'date-fns';
+
+/** Check if req.user is a member (owner or accepted member) of the team. */
+const isTeamMember = (team, userId) => {
+  if (!team || !userId) return false;
+  if (String(team.owner) === String(userId)) return true;
+  return (team.members || []).some(
+    (m) => m.user && String(m.user) === String(userId) && (m.status === 'accepted' || !m.status)
+  );
+};
 
 // Helper function to generate token
 const generateToken = () => crypto.randomBytes(32).toString('hex');
@@ -12,8 +22,7 @@ const generateToken = () => crypto.randomBytes(32).toString('hex');
 export const createTeam = async (req, res) => {
     try {
         const { title, description, visibility, members } = req.body;
-        const ownerId = req.user._id; // From authenticated user
-        console.log("Authenticated User ID:", ownerId); // Should match token's _id
+        const ownerId = req.user._id;
 
         // Validate input
         if (!title || !description || visibility === undefined || !members || !members.length) {
@@ -325,7 +334,6 @@ export const inviteUser = async (req, res) => {
     try {
         const { userId, role, languages, sender } = req.body;
         const teamId = req.params.teamId;
-        console.log("PARAMETER Team ID: ", teamId);
 
         const team = await Team.findById(teamId);
         if (!team) {
@@ -545,6 +553,89 @@ export const joinPublicTeam = async (req, res) => {
         await team.save();
         res.json({ success: true, team });
     } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// Get Excalidraw scene for a team (members only)
+export const getExcalidraw = async (req, res) => {
+    try {
+        const teamId = req.params.teamId;
+        const userId = req.user._id;
+
+        const team = await Team.findById(teamId).lean();
+        if (!team) {
+            return res.status(404).json({ message: 'Team not found' });
+        }
+        if (!isTeamMember(team, userId)) {
+            return res.status(403).json({ message: 'Only team members can view this whiteboard' });
+        }
+
+        const doc = await TeamExcalidraw.findOne({ team: teamId }).lean();
+        if (!doc) {
+            return res.status(404).json({ message: 'No whiteboard data yet', data: null });
+        }
+
+        const appState = doc.appState && typeof doc.appState === 'object' ? { ...doc.appState } : {};
+        if (!Array.isArray(appState.collaborators)) {
+            appState.collaborators = [];
+        }
+
+        res.json({
+            data: {
+                elements: Array.isArray(doc.elements) ? doc.elements : [],
+                appState,
+            },
+        });
+    } catch (error) {
+        console.error('getExcalidraw error:', error);
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// Save Excalidraw scene for a team (members only). Strip collaborators from appState when saving.
+export const putExcalidraw = async (req, res) => {
+    try {
+        const teamId = req.params.teamId;
+        const userId = req.user._id;
+        const { elements, appState } = req.body || {};
+
+        const team = await Team.findById(teamId).lean();
+        if (!team) {
+            return res.status(404).json({ message: 'Team not found' });
+        }
+        if (!isTeamMember(team, userId)) {
+            return res.status(403).json({ message: 'Only team members can edit this whiteboard' });
+        }
+
+        const safeAppState = appState && typeof appState === 'object' ? { ...appState } : {};
+        delete safeAppState.collaborators;
+
+        const payload = {
+            elements: Array.isArray(elements) ? elements : [],
+            appState: safeAppState,
+            updatedAt: new Date(),
+        };
+
+        const doc = await TeamExcalidraw.findOneAndUpdate(
+            { team: teamId },
+            { $set: payload },
+            { new: true, upsert: true }
+        ).lean();
+
+        const outAppState = doc.appState && typeof doc.appState === 'object' ? { ...doc.appState } : {};
+        if (!Array.isArray(outAppState.collaborators)) {
+            outAppState.collaborators = [];
+        }
+
+        res.json({
+            data: {
+                elements: Array.isArray(doc.elements) ? doc.elements : [],
+                appState: outAppState,
+            },
+        });
+    } catch (error) {
+        console.error('putExcalidraw error:', error);
         res.status(500).json({ message: error.message });
     }
 };

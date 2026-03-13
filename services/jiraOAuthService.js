@@ -341,8 +341,9 @@ export const recoverJiraCloudIdForProject = async (userId, projectKey) => {
 
 /**
  * Store JIRA credentials after OAuth callback
+ * @param {string} [siteUrl] - Base URL of the Jira site (e.g. https://yoursite.atlassian.net) for building browse links
  */
-export const storeJiraCredentials = async (userId, accessToken, refreshToken, cloudId, expiresIn) => {
+export const storeJiraCredentials = async (userId, accessToken, refreshToken, cloudId, expiresIn, siteUrl = null) => {
     const expiresAt = new Date(Date.now() + expiresIn * 1000);
 
     await JiraCredentials.findOneAndUpdate(
@@ -352,7 +353,8 @@ export const storeJiraCredentials = async (userId, accessToken, refreshToken, cl
             refreshToken,
             cloudId,
             expiresAt,
-            connectedAt: new Date()
+            connectedAt: new Date(),
+            ...(siteUrl != null && siteUrl !== "" && { jiraSiteUrl: siteUrl })
         },
         { upsert: true, new: true }
     );

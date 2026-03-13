@@ -7,7 +7,11 @@ import {
     disconnectJira,
     fetchProjects,
     fetchIssues,
-    debugJira
+    debugJira,
+    createIssue,
+    updateIssue,
+    deleteIssue,
+    transitionIssue,
 } from "../controllers/JiraController.js";
 import { fetchSimpleTasks } from "../controllers/JiraSimpleController.js";
 
@@ -22,7 +26,13 @@ router.get("/debug", auth, debugJira);
 
 // Data Routes
 router.get("/projects", auth, fetchProjects);
+router.get("/tasks/:projectKey", auth, fetchSimpleTasks);
+
+// Issue CRUD + transition (order: more specific first)
+router.post("/issues", auth, createIssue);
+router.patch("/issues/:issueKey/transition", auth, transitionIssue);
+router.patch("/issues/:issueKey", auth, updateIssue);
+router.delete("/issues/:issueKey", auth, deleteIssue);
 router.get("/issues/:projectKey", auth, fetchIssues);
-router.get("/tasks/:projectKey", auth, fetchSimpleTasks); // NEW: Simple tasks endpoint
 
 export default router;
