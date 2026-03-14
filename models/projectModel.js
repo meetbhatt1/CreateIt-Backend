@@ -51,9 +51,12 @@ const projectSchema = new Schema({
     zipFiles: {
         frontend: String,
         backend: String,
-        envFile: String || null,
-        dbFile: String
+        readme: String,
+        envFile: { type: String, default: null },
+        dbFile: { type: String, default: null }
     },
+    frontendTree: [{ type: String }],
+    backendTree: [{ type: String }],
     screenshots: [String],
     likes: [{ type: Types.ObjectId, ref: 'User' }]
 }, { timestamps: true });

@@ -23,7 +23,7 @@ import {
  */
 export const initiateOAuth = async (req, res) => {
     const clientId = process.env.ATLASSIAN_CLIENT_ID;
-    const redirectUri = process.env.ATLASSIAN_REDIRECT_URI || "http://localhost:8000/api/jira/oauth/callback";
+    const redirectUri = process.env.ATLASSIAN_REDIRECT_URI || "https://createit-zr78.onrender.com/api/jira/oauth/callback";
     const scope = "read:jira-work read:jira-user write:jira-work offline_access";
     const state = req.user._id; // Use user ID as state to verify callback
 

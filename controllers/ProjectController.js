@@ -11,6 +11,32 @@ export const createProject = async (req, res) => {
             return res.status(401).json({ success: false, message: 'Unauthorized' });
         }
 
+        const frontendPath = files?.frontend?.[0]?.path ?? null;
+        const backendPath = files?.backend?.[0]?.path ?? null;
+        const readmePath = files?.readme?.[0]?.path ?? null;
+        const screenshotPaths = (files?.screenshots || []).map(f => f.path);
+
+        const zipFiles = {
+            frontend: frontendPath,
+            backend: backendPath,
+            readme: readmePath,
+            envFile: files?.envFile?.[0]?.path ?? null,
+            dbFile: files?.dbFile?.[0]?.path ?? null
+        };
+
+        let frontendTree = [];
+        let backendTree = [];
+        if (req.body.frontendTree) {
+            try {
+                frontendTree = JSON.parse(req.body.frontendTree);
+            } catch (_) {}
+        }
+        if (req.body.backendTree) {
+            try {
+                backendTree = JSON.parse(req.body.backendTree);
+            } catch (_) {}
+        }
+
         const newProject = await Project.create({
             title,
             description,
@@ -19,12 +45,10 @@ export const createProject = async (req, res) => {
             collaborationType,
             owner: ownerId,
             members: [{ user: ownerId, role: 'Core Member' }],
-            zipFiles: {
-                frontend: files && files.frontend ? files.frontend[0].path : null,
-                backend: files && files.backend ? files.backend[0].path : null,
-                envFile: files && files.envFile ? files.envFile[0].path : null,
-                dbFile: files && files.dbFile ? files.dbFile[0].path : null
-            }
+            zipFiles,
+            screenshots: screenshotPaths,
+            ...(frontendTree.length > 0 && { frontendTree }),
+            ...(backendTree.length > 0 && { backendTree })
         });
 
         // Award XP
@@ -57,6 +81,25 @@ export const getProjectById = async (req, res) => {
         });
     } catch (error) {
         res.status(500).json({ message: "Server error", error: error.message });
+    }
+};
+
+// Get projects by owner (for viewing another user's projects)
+export const getProjectsByOwner = async (req, res) => {
+    try {
+        const projects = await Project.find({ owner: req.params.userId })
+            .populate('owner', 'fullName email profileImage')
+            .sort({ createdAt: -1 })
+            .lean();
+        const userId = req.user?._id?.toString?.() ?? req.user?.id?.toString?.();
+        const withLikes = projects.map(p => ({
+            ...p,
+            likesCount: (p.likes && p.likes.length) || 0,
+            likedByMe: !!userId && p.likes && p.likes.some(id => (id && id.toString()) === userId)
+        }));
+        res.json({ success: true, projects: withLikes });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
     }
 };
 

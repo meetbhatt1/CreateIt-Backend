@@ -24,7 +24,7 @@ async function isTeamRoomMember(slugOrTeamId, userId) {
     })
 }
 
-/** Resolve room by slug. For team rooms, slug may be "team-<id>" or just "<id>" (24-char hex). */
+/** Resolve room by slug. For team rooms, slug may be "team-<id>" or just "<id>". For DM: "dm-id1-id2". */
 async function findRoomBySlug(slug) {
     if (!slug) return null
     let room = await ChatRoom.findOne({ slug })
@@ -32,6 +32,13 @@ async function findRoomBySlug(slug) {
     const tid = String(slug).startsWith('team-') ? slug.replace('team-', '') : slug
     if (/^[a-fA-F0-9]{24}$/.test(tid)) room = await ChatRoom.findOne({ slug: `team-${tid}` })
     return room ?? null
+}
+
+/** Build DM slug from two user ids (sorted for consistency). */
+function dmSlug(id1, id2) {
+    const a = String(id1)
+    const b = String(id2)
+    return a < b ? `dm-${a}-${b}` : `dm-${b}-${a}`
 }
 
 // Create a room (with authenticated user)
@@ -95,6 +102,59 @@ router.post('/rooms/:slug/join', auth, async (req, res) => {
         return res.json({ success: true, message: 'Joined room successfully' })
     } catch (err) {
         return res.status(500).json({ message: 'Failed to join room' })
+    }
+})
+
+// Create or get DM room with another user
+router.post('/dm/:otherUserId', auth, async (req, res) => {
+    try {
+        const userId = req.user._id
+        const otherId = req.params.otherUserId
+        if (String(userId) === String(otherId)) return res.status(400).json({ message: 'Cannot DM yourself' })
+        const slug = dmSlug(userId, otherId)
+        let room = await ChatRoom.findOne({ slug }).populate('members', 'fullName profileImage')
+        if (!room) {
+            room = await ChatRoom.create({
+                name: 'DM',
+                description: 'Direct message',
+                slug,
+                members: [userId, otherId]
+            })
+            room = await ChatRoom.findById(room._id).populate('members', 'fullName profileImage')
+        }
+        return res.json({ room, slug })
+    } catch (err) {
+        res.status(500).json({ message: err.message })
+    }
+})
+
+// List my DM conversations (rooms where slug starts with dm- and I'm a member)
+router.get('/dm-conversations', auth, async (req, res) => {
+    try {
+        const userId = req.user._id
+        const rooms = await ChatRoom.find({
+            slug: /^dm-/,
+            members: userId
+        }).populate('members', 'fullName email profileImage').lean()
+        const lastMessages = await ChatMessage.aggregate([
+            { $match: { room: { $in: rooms.map(r => r._id) } } },
+            { $sort: { createdAt: -1 } },
+            { $group: { _id: '$room', last: { $first: '$$ROOT' } } }
+        ])
+        const lastByRoom = Object.fromEntries(lastMessages.map(m => [String(m._id), m.last]))
+        const list = rooms.map(r => {
+            const other = r.members.find(m => String(m._id) !== String(userId))
+            const last = lastByRoom[String(r._id)]
+            return {
+                slug: r.slug,
+                otherUser: other,
+                lastMessage: last ? { message: last.message, createdAt: last.createdAt, sender: last.sender } : null,
+                updatedAt: r.updatedAt
+            }
+        }).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+        return res.json({ conversations: list })
+    } catch (err) {
+        res.status(500).json({ message: err.message })
     }
 })
 

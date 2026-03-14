@@ -14,8 +14,12 @@ import commentRoutes from './routes/commentRoutes.js'
 import JiraRoutes from './routes/JiraRoutes.js'
 import DashboardRoutes from './routes/DashboardRoutes.js'
 import MockInterviewRoutes from './routes/MockInterviewRoutes.js'
+import AdminRoutes from './routes/AdminRoutes.js'
+import FriendsRoutes from './routes/FriendsRoutes.js'
+import NotificationsRoutes from './routes/NotificationsRoutes.js'
 import ChatMessage from './models/ChatMessage.js'
 import ChatRoom from './models/ChatRoom.js'
+import Notification from './models/Notification.js'
 import { createSocketAuthMiddleware } from './middleware/SocketAuth.js'
 import Team from './models/Team.js'
 import DBConnection from './config/db.js'
@@ -25,7 +29,10 @@ import passport from 'passport'
 import mongoose from 'mongoose'
 import { createServer } from "http"
 import { Server } from "socket.io"
+import path from "path"
+import { fileURLToPath } from "url"
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 dotenv.config()
 validateEnv()
 
@@ -63,6 +70,9 @@ const limiter = rateLimit({
 })
 app.use(limiter)
 
+// Serve uploaded files (screenshots, zips, readme)
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
+
 // Routes
 app.use(passport.initialize())
 app.get("/api", (req, res) => {
@@ -77,6 +87,9 @@ app.use('/api/comments', commentRoutes)
 app.use('/api/jira', JiraRoutes)
 app.use('/api/dashboard', DashboardRoutes)
 app.use('/api/mock-interview', MockInterviewRoutes)
+app.use('/api/admin', AdminRoutes)
+app.use('/api/friends', FriendsRoutes)
+app.use('/api/notifications', NotificationsRoutes)
 
 app.get("/api/health", async (req, res) => {
   const dbState = mongoose.connection.readyState
@@ -121,11 +134,16 @@ io.on("connection", (socket) => {
             if (!room) {
                 room = await ChatRoom.create({ slug, name: name || slug, description })
             }
+            const userId = socket.user?.id ?? socket.user?._id
+            if (!userId) return socket.emit('chat:error', { message: 'Unauthorized' })
+            // DM room: only allow if user is in room.members
+            if (slug && String(slug).startsWith('dm-')) {
+                const inMembers = (room.members || []).some(m => String(m) === String(userId))
+                if (!inMembers) return socket.emit('chat:error', { message: 'Not a participant' })
+            }
             // Enforce team membership if slug implies team room: team-{teamId} or plain 24-char team id
             const teamIdFromSlug = slug.startsWith('team-') ? slug.replace('team-', '') : (/^[a-fA-F0-9]{24}$/.test(String(slug)) ? slug : null)
             if (teamIdFromSlug) {
-                const userId = socket.user?.id ?? socket.user?._id
-                if (!userId) return socket.emit('chat:error', { message: 'Unauthorized' })
                 const team = await Team.findById(teamIdFromSlug).lean()
                 const isMember = team && (
                     String(team.owner) === String(userId) ||
@@ -187,6 +205,20 @@ io.on("connection", (socket) => {
             };
             io.to(String(roomDocId)).emit('chat:message', payload);
             devLog('[chat:send] OK room=%s', roomDocId);
+            // If DM room, notify the other user
+            const roomDoc = await ChatRoom.findById(roomDocId);
+            if (roomDoc && roomDoc.slug && String(roomDoc.slug).startsWith('dm-')) {
+                const other = (roomDoc.members || []).find(m => String(m) !== String(uid));
+                if (other) {
+                    await Notification.create({
+                        user: other,
+                        type: 'message',
+                        fromUser: uid,
+                        ref: doc._id,
+                        text: message ? message.slice(0, 80) : 'Sent a message',
+                    });
+                }
+            }
         } catch (e) {
             if (!isProduction) console.error('[chat:send] Error:', e.message);
             socket.emit('chat:error', { message: isProduction ? 'Failed to send message' : (e.message || 'Failed to send message') });
