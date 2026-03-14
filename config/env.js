@@ -43,12 +43,16 @@ export function validateEnv() {
   }
 }
 
+/** Production frontend URL used when FRONTEND_URL is not set (e.g. on Render). */
+const PRODUCTION_FRONTEND_ORIGIN = 'https://svn.createit.in';
+
 /**
  * CORS origin: allow FRONTEND_URL or list, else in dev allow true for local testing.
+ * In production, if no FRONTEND_URL is set, allows PRODUCTION_FRONTEND_ORIGIN so the app works.
  */
 export function getCorsOrigin() {
   const url = process.env.FRONTEND_URL || process.env.FRONTEND_URL_DEV || process.env.FRONTEND_URL_PROD;
   if (url) return url.split(',').map((u) => u.trim()).filter(Boolean);
-  if (isProduction) return [];
+  if (isProduction) return [PRODUCTION_FRONTEND_ORIGIN];
   return true; // dev: reflect request origin
 }
