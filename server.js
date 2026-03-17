@@ -49,7 +49,10 @@ DBConnection()
 
 const app = express()
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }))
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: false,
+}))
 app.use(morgan(isProduction ? 'combined' : 'dev'))
 app.use(express.json({ limit: '512kb' }))
 

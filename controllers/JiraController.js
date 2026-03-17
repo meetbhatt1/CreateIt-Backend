@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getFrontendBaseUrl, getAtlassianRedirectUri } from "../config/env.js";
 import {
     isJiraConnected,
     storeJiraCredentials,
@@ -23,7 +24,7 @@ import {
  */
 export const initiateOAuth = async (req, res) => {
     const clientId = process.env.ATLASSIAN_CLIENT_ID;
-    const redirectUri = process.env.ATLASSIAN_REDIRECT_URI || "https://createit-zr78.onrender.com/api/jira/oauth/callback";
+    const redirectUri = getAtlassianRedirectUri();
     const scope = "read:jira-work read:jira-user write:jira-work offline_access";
     const state = req.user._id; // Use user ID as state to verify callback
 
@@ -40,8 +41,7 @@ export const handleCallback = async (req, res) => {
     const userId = state; // We used userId as state
 
     if (!code) {
-        // const base = process.env.FRONTEND_URL_PROD || process.env.FRONTEND_URL_DEV;
-        const base = process.env.FRONTEND_URL_DEV;
+        const base = getFrontendBaseUrl();
         return res.redirect(`${base}/jira/error?message=Authorization failed`);
     }
 
@@ -52,12 +52,11 @@ export const handleCallback = async (req, res) => {
             client_id: process.env.ATLASSIAN_CLIENT_ID,
             client_secret: process.env.ATLASSIAN_CLIENT_SECRET,
             code,
-            redirect_uri: process.env.ATLASSIAN_REDIRECT_URI
+            redirect_uri: getAtlassianRedirectUri()
         });
 
         const { access_token, refresh_token, expires_in } = tokenResponse.data;
-        // const base = process.env.FRONTEND_URL_PROD || process.env.FRONTEND_URL_DEV;
-        const base = process.env.FRONTEND_URL_DEV;
+        const base = getFrontendBaseUrl();
 
         // 2. Get Cloud ID and optional site URL (accessible resources) - can return 410 even with valid token
         let cloudId;
@@ -104,8 +103,7 @@ export const handleCallback = async (req, res) => {
         res.redirect(`${base}/jira/success`);
     } catch (error) {
         console.error("JIRA Callback Error:", error.response?.data || error.message);
-        //  const base = process.env.FRONTEND_URL_PROD || process.env.FRONTEND_URL_DEV;
-        const base = process.env.FRONTEND_URL_DEV;
+        const base = getFrontendBaseUrl();
         res.redirect(`${base}/jira/error?message=${encodeURIComponent(error.message)}`);
     }
 };

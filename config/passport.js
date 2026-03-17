@@ -4,11 +4,12 @@ dotenv.config(); // ✅ must be here!
 import passport from 'passport';
 import GoogleStrategy from 'passport-google-oauth20';
 import User from '../models/userModel.js';
+import { getGoogleCallbackUrl } from './env.js';
 
 passport.use(new GoogleStrategy({
     clientID: process.env.CLIENT_ID,
     clientSecret: process.env.CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL,
+    callbackURL: getGoogleCallbackUrl(),
 }, async (accessToken, refreshToken, profile, done) => {
     try {
         let user = await User.findOne({ googleId: profile.id });

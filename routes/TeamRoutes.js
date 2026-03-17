@@ -13,7 +13,9 @@ import {
     getJoinRequests,
     respondToJoinRequest,
     getExcalidraw,
-    putExcalidraw
+    putExcalidraw,
+    getKanban,
+    putKanban
 } from '../controllers/TeamController.js';
 import { auth } from '../middleware/AuthMiddleware.js';
 import { validateObjectId } from '../middleware/validateObjectId.js';
@@ -34,5 +36,7 @@ router.get('/user/:id', auth, validateObjectId('id'), getTeamsByUser);
 router.get('/:teamId', auth, validateObjectId('teamId'), getTeamDetails);
 router.get('/:teamId/excalidraw', auth, validateObjectId('teamId'), getExcalidraw);
 router.put('/:teamId/excalidraw', auth, validateObjectId('teamId'), putExcalidraw);
+router.get('/:teamId/kanban', auth, validateObjectId('teamId'), getKanban);
+router.put('/:teamId/kanban', auth, validateObjectId('teamId'), putKanban);
 
 export default router;

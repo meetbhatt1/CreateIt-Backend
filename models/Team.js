@@ -40,7 +40,9 @@ const teamSchema = new mongoose.Schema({
     createdAt: {
         type: Date,
         default: Date.now
-    }
+    },
+    kanbanColumns: { type: mongoose.Schema.Types.Mixed },
+    kanbanStatusHistory: { type: mongoose.Schema.Types.Mixed }
 });
 
 // Add index for better performance on queries

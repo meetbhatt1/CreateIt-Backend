@@ -639,3 +639,61 @@ export const putExcalidraw = async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 };
+
+/** GET /api/team/:teamId/kanban - Load kanban columns + status history (team members only). */
+export const getKanban = async (req, res) => {
+    try {
+        const teamId = req.params.teamId;
+        const userId = req.user._id;
+
+        const team = await Team.findById(teamId).lean();
+        if (!team) {
+            return res.status(404).json({ message: 'Team not found' });
+        }
+        if (!isTeamMember(team, userId)) {
+            return res.status(403).json({ message: 'Only team members can view this board' });
+        }
+
+        const columns = team.kanbanColumns && typeof team.kanbanColumns === 'object'
+            ? team.kanbanColumns
+            : { todo: [], inProgress: [], review: [], done: [] };
+        const statusHistory = team.kanbanStatusHistory && typeof team.kanbanStatusHistory === 'object'
+            ? team.kanbanStatusHistory
+            : {};
+
+        return res.json({ columns, statusHistory });
+    } catch (error) {
+        console.error('getKanban error:', error);
+        res.status(500).json({ message: error.message });
+    }
+};
+
+/** PUT /api/team/:teamId/kanban - Save kanban columns + status history (team members only). */
+export const putKanban = async (req, res) => {
+    try {
+        const teamId = req.params.teamId;
+        const userId = req.user._id;
+        const { columns, statusHistory } = req.body || {};
+
+        const team = await Team.findById(teamId);
+        if (!team) {
+            return res.status(404).json({ message: 'Team not found' });
+        }
+        if (!isTeamMember(team, userId)) {
+            return res.status(403).json({ message: 'Only team members can edit this board' });
+        }
+
+        if (columns != null && typeof columns === 'object') {
+            team.kanbanColumns = columns;
+        }
+        if (statusHistory != null && typeof statusHistory === 'object') {
+            team.kanbanStatusHistory = statusHistory;
+        }
+        await team.save();
+
+        return res.json({ message: 'Kanban saved', columns: team.kanbanColumns, statusHistory: team.kanbanStatusHistory });
+    } catch (error) {
+        console.error('putKanban error:', error);
+        res.status(500).json({ message: error.message });
+    }
+};

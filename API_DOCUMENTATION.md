@@ -504,6 +504,9 @@ Redirects to Google; callback redirects to frontend with `?token=...`.
 - `302` – Redirect to frontend success/error URL  
 - No JSON response  
 
+**If you see "unauthorized_client" / "The app's callback URL is invalid":**  
+The `redirect_uri` sent to Atlassian must be **exactly** registered in your [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/) → your app → **Authorization** → **Callback URL**. Add the full backend callback URL (e.g. `https://your-backend.onrender.com/api/jira/oauth/callback`). Set `ATLASSIAN_REDIRECT_URI` in env to that same URL so it matches.
+
 ---
 
 ### POST `/api/jira/disconnect`

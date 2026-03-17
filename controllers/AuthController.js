@@ -2,6 +2,7 @@ import User from '../models/userModel.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import sendEmail from '../utils/sendEmail.js';
+import { getFrontendBaseUrl } from '../config/env.js';
 
 
 export const SignUpUser = async (req, res) => {
@@ -189,7 +190,5 @@ export const googleAuth = async (req, res) => {
         process.env.JWT_SECRET,
         { expiresIn: '7d' }
     );
-    // const frontendUrl = process.env.FRONTEND_URL_PROD || process.env.FRONTEND_URL_DEV;
-    const frontendUrl = process.env.FRONTEND_URL_DEV;
-    res.redirect(`${frontendUrl}/oauth-success?token=${token}`);
+    res.redirect(`${getFrontendBaseUrl()}/oauth-success?token=${token}`);
 }
