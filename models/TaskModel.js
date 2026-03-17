@@ -35,7 +35,14 @@ const taskSchema = new mongoose.Schema(
         projectId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Project",
-            required: true,
+        },
+        teamId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Team",
+        },
+        statusHistory: {
+            type: [{ status: String, at: Date }],
+            default: [],
         },
         createdBy: {
             type: mongoose.Schema.Types.ObjectId,

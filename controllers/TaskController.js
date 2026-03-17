@@ -10,19 +10,35 @@ export const getTasksByProject = async (req, res) => {
     }
 };
 
+/** GET /api/task/team/:teamId - Get all tasks for a team (Kanban board). Returns flat array. */
+export const getTasksByTeam = async (req, res) => {
+    try {
+        const tasks = await Task.find({ teamId: req.params.teamId }).sort({ createdAt: 1 });
+        res.json(tasks);
+    } catch (err) {
+        res.status(500).json({ message: "Failed to fetch team tasks" });
+    }
+};
+
 export const createTask = async (req, res) => {
     try {
-        const { title, description, priority, status, due, xp, assignee, projectId } = req?.body;
+        const { title, description, priority, status, due, assignee, projectId, teamId } = req?.body;
+        if (!projectId && !teamId) {
+            return res.status(400).json({ message: "Either projectId or teamId is required" });
+        }
 
+        const initialStatus = status || "todo";
         const task = new Task({
-            title,
-            description,
-            priority,
-            status,
-            due,
-            xp,
-            assignee,
-            projectId,
+            title: title || "New task",
+            description: description ?? "",
+            priority: priority || "medium",
+            status: initialStatus,
+            due: due || undefined,
+            xp: 0,
+            assignee: assignee || "Unassigned",
+            projectId: projectId || undefined,
+            teamId: teamId || undefined,
+            statusHistory: [{ status: initialStatus, at: new Date() }],
             createdBy: req?.user?._id,
         });
 
@@ -41,12 +57,17 @@ export const updateTask = async (req, res) => {
         if (!task) return res.status(404).json({ message: "Task not found" });
 
         const oldStatus = task.status;
-        const updated = await Task.findByIdAndUpdate(req.params.taskId, req.body, {
+        const updatePayload = { ...req.body };
+        if (status && status !== oldStatus) {
+            const history = (task.statusHistory || []).concat({ status, at: new Date() });
+            updatePayload.statusHistory = history;
+        }
+        const updated = await Task.findByIdAndUpdate(req.params.taskId, updatePayload, {
             new: true,
         });
 
-        // Award XP if task is moved to done and wasn't there before (schema uses lowercase 'done')
-        if (status === 'done' && oldStatus !== 'done') {
+        // Award XP only for project tasks (not team Kanban) when moved to done
+        if (task.projectId && status === 'done' && oldStatus !== 'done') {
             await addXP(req.user._id, 'COMPLETE_TASK');
         }
 

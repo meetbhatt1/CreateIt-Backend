@@ -58,7 +58,7 @@ app.use(express.json({ limit: '512kb' }))
 
 const corsOrigin = getCorsOrigin()
 app.use(cors({
-  origin: Array.isArray(corsOrigin) && corsOrigin.length ? corsOrigin : corsOrigin,
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
