@@ -9,7 +9,7 @@ import { getGoogleCallbackUrl } from './env.js';
 passport.use(new GoogleStrategy({
     clientID: process.env.CLIENT_ID,
     clientSecret: process.env.CLIENT_SECRET,
-    callbackURL: getGoogleCallbackUri(),
+    callbackURL: getGoogleCallbackUrl(),
 }, async (accessToken, refreshToken, profile, done) => {
     try {
         let user = await User.findOne({ googleId: profile.id });
